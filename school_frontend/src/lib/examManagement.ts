@@ -31,6 +31,8 @@ export const getExamSchedule = async (classname?: string): Promise<ExamSchedule 
       ? `${API_URL}/exams/schedule?classname=${encodeURIComponent(classname)}`
       : `${API_URL}/exams/schedule`;
       
+    console.log('[getExamSchedule] Fetching from:', url);
+    
     const response = await fetch(url, {
       headers: {
         'Authorization': `Bearer ${token}`
@@ -43,7 +45,13 @@ export const getExamSchedule = async (classname?: string): Promise<ExamSchedule 
     }
     
     const data = await response.json();
-    return Array.isArray(data) ? (data.length > 0 ? data[0] : null) : data;
+    console.log('[getExamSchedule] Received data:', data);
+    
+    const schedule = Array.isArray(data) ? (data.length > 0 ? data[0] : null) : data;
+    console.log('[getExamSchedule] Final schedule:', schedule);
+    console.log('[getExamSchedule] Subjects count:', schedule?.subjects?.length || 0);
+    
+    return schedule;
   } catch (error) {
     console.error("Error loading exam schedule:", error);
     return null;
@@ -95,44 +103,51 @@ export const getAdmitCardAccess = async (studentId: string): Promise<boolean> =>
   }
 };
 
-// Set Admit Card Access for Student
-export const setAdmitCardAccess = (studentId: string, allowed: boolean): void => {
+// Set Admit Card Access for Student (API Version)
+export const setAdmitCardAccess = async (studentId: string, allowed: boolean): Promise<boolean> => {
   try {
-    const stored = localStorage.getItem(ADMIT_CARD_ACCESS_KEY);
-    const access: AdmitCardAccess[] = stored ? JSON.parse(stored) : [];
-    const existingIndex = access.findIndex(a => a.studentId === studentId);
+    const token = localStorage.getItem('token');
+    const response = await fetch(`${API_URL}/exams/access`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
+      body: JSON.stringify({ studentId, allowed })
+    });
     
-    if (existingIndex >= 0) {
-      access[existingIndex] = {
-        studentId,
-        allowed,
-        allowedDate: allowed ? new Date().toISOString() : undefined,
-      };
-    } else {
-      access.push({
-        studentId,
-        allowed,
-        allowedDate: allowed ? new Date().toISOString() : undefined,
-      });
+    if (!response.ok) {
+      throw new Error('Failed to update admit card access');
     }
     
-    localStorage.setItem(ADMIT_CARD_ACCESS_KEY, JSON.stringify(access));
+    return true;
   } catch (error) {
     console.error("Error saving admit card access:", error);
+    return false;
   }
 };
 
-// Allow All Students
-export const allowAllStudents = (studentIds: string[]): void => {
+// Allow All Students (API Version)
+export const allowAllStudents = async (studentIds: string[]): Promise<boolean> => {
   try {
-    const access: AdmitCardAccess[] = studentIds.map(id => ({
-      studentId: id,
-      allowed: true,
-      allowedDate: new Date().toISOString(),
-    }));
-    localStorage.setItem(ADMIT_CARD_ACCESS_KEY, JSON.stringify(access));
+    const token = localStorage.getItem('token');
+    const response = await fetch(`${API_URL}/exams/access/all`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
+      body: JSON.stringify({ studentIds })
+    });
+    
+    if (!response.ok) {
+      throw new Error('Failed to allow all students');
+    }
+    
+    return true;
   } catch (error) {
     console.error("Error allowing all students:", error);
+    return false;
   }
 };
 

@@ -19,14 +19,34 @@ exports.getSchedule = async (req, res) => {
 
     const [rows] = await db.execute(sql, params);
     
-    const schedules = rows.map(s => ({
-      ...s,
-      _id: s.id.toString(),
-      examName: s.exam_name, // CamelCase for frontend
-      examDate: s.exam_date,
-      allowStudentDownload: !!s.allow_download,
-      subjects: s.subjects || [] // Parse JSON automatically if driver supports it, else JSON.parse(s.subjects)
-    }));
+    console.log(`[getSchedule] Found ${rows.length} schedule(s) for class: ${classname || 'All'}`);
+    
+    const schedules = rows.map(s => {
+      // Parse subjects JSON string
+      let parsedSubjects = [];
+      try {
+        if (typeof s.subjects === 'string') {
+          console.log(`[getSchedule] Parsing subjects string for ${s.classname}:`, s.subjects.substring(0, 100));
+          parsedSubjects = JSON.parse(s.subjects);
+        } else if (Array.isArray(s.subjects)) {
+          parsedSubjects = s.subjects;
+        }
+      } catch (e) {
+        console.error('[getSchedule] Error parsing subjects:', e);
+        parsedSubjects = [];
+      }
+      
+      console.log(`[getSchedule] Parsed ${parsedSubjects.length} subjects for ${s.classname}`);
+      
+      return {
+        ...s,
+        _id: s.id.toString(),
+        examName: s.exam_name,
+        examDate: s.exam_date,
+        allowStudentDownload: !!s.allow_download,
+        subjects: parsedSubjects
+      };
+    });
 
     // If fetching for a specific class, return just the object, else return array
     if (classname && schedules.length > 0) {

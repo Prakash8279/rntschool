@@ -38,6 +38,7 @@ const AdmitCardManagement = () => {
 
   const [activeTab, setActiveTab] = useState("schedule");
   const [examSchedule, setExamSchedule] = useState<ExamSchedule | null>(null);
+  const [previewSchedule, setPreviewSchedule] = useState<ExamSchedule | null>(null); // For preview in download tab
   const [selectedClass, setSelectedClass] = useState("All");
   const [selectedRollNo, setSelectedRollNo] = useState("");
   const [admissionNoSearch, setAdmissionNoSearch] = useState("");
@@ -81,6 +82,22 @@ const AdmitCardManagement = () => {
     loadAccessList();
   }, [dispatch]);
 
+  // Load preview schedule when selected class changes
+  useEffect(() => {
+    const loadPreviewSchedule = async () => {
+      if (selectedClass && selectedClass !== "All") {
+        console.log('[Preview] Loading schedule for class:', selectedClass);
+        const schedule = await getExamSchedule(selectedClass);
+        console.log('[Preview] Loaded schedule:', schedule);
+        setPreviewSchedule(schedule);
+      } else {
+        setPreviewSchedule(null);
+      }
+    };
+    
+    loadPreviewSchedule();
+  }, [selectedClass]);
+
   const isAdmin = role === "admin";
   const classes = Array.from(new Set(students.map(s => s.classname))).sort();
 
@@ -95,12 +112,232 @@ const AdmitCardManagement = () => {
     );
   }
 
+  // --- HELPER: Add admit cards to existing PDF ---
+  const generateAdmitCardPDFToExisting = async (
+    pdf: jsPDF, 
+    studentsToPrint: Student[], 
+    scheduleToUse: ExamSchedule,
+    isFirstPage: boolean
+  ) => {
+    if(!scheduleToUse) {
+      console.error("No exam schedule provided");
+      return;
+    }
+    
+    console.log(`Adding ${studentsToPrint.length} admit cards to PDF`);
+    console.log('Using schedule:', scheduleToUse);
+    
+    // Pre-load logo
+    let logoData: string | null = null;
+    try {
+      logoData = await new Promise<string>((resolve, reject) => {
+        const img = new Image();
+        img.crossOrigin = "anonymous";
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          canvas.width = img.width;
+          canvas.height = img.height;
+          const ctx = canvas.getContext('2d');
+          ctx?.drawImage(img, 0, 0);
+          resolve(canvas.toDataURL('image/png'));
+        };
+        img.onerror = reject;
+        img.src = schoolLogo;
+      });
+    } catch (e) {
+      console.error("Logo load error", e);
+    }
+
+    for (let i = 0; i < studentsToPrint.length; i++) {
+        const student = studentsToPrint[i];
+        console.log(`Processing student ${i+1}/${studentsToPrint.length}: ${student.student_name}`);
+        
+        if (!isFirstPage || i > 0) pdf.addPage();
+        
+        // Load student photo
+        let studentPhotoData: string | null = null;
+        if (student.image) {
+          try {
+            const response = await fetch(
+              `http://localhost:5000/api/image/base64?path=${encodeURIComponent(student.image)}`,
+              {
+                headers: {
+                  'Authorization': `Bearer ${localStorage.getItem('token')}`
+                }
+              }
+            );
+            
+            if (response.ok) {
+              const data = await response.json();
+              if (data.success && data.data) {
+                studentPhotoData = data.data;
+              }
+            }
+          } catch (e) {
+            console.error("Error loading student photo:", e);
+          }
+        }
+
+        // --- DRAW ADMIT CARD (same drawing code) ---
+        const margin = 15;
+        const width = 180;
+        const startY = 15;
+        let y = startY;
+
+        pdf.setDrawColor(0);
+        pdf.setLineWidth(0.5);
+        pdf.rect(10, 10, 190, 277);
+        pdf.setLineWidth(0.2);
+        pdf.rect(12, 12, 186, 273);
+
+        if(logoData) pdf.addImage(logoData, 'PNG', margin, y, 20, 20);
+        
+        pdf.setFont("helvetica", "bold");
+        pdf.setFontSize(22);
+        pdf.text("R.N.T. PUBLIC SCHOOL", 105, y + 8, { align: "center" });
+        
+        pdf.setFontSize(10);
+        pdf.setFont("helvetica", "normal");
+        pdf.text("Phone: +91-7061337068 | Email: rntpublics@gmail.com", 105, y + 14, { align: "center" });
+        
+        pdf.setFillColor(0, 0, 0);
+        pdf.rect(85, y + 18, 40, 7, 'F');
+        pdf.setTextColor(255, 255, 255);
+        pdf.setFont("helvetica", "bold");
+        pdf.setFontSize(11);
+        pdf.text("ADMIT CARD", 105, y + 23, { align: "center" });
+        
+        pdf.setTextColor(0, 0, 0);
+        y += 35;
+
+        pdf.setFontSize(14);
+        pdf.setFont("helvetica", "bold");
+        pdf.text(String(scheduleToUse.examName || "Examination").toUpperCase(), 105, y, { align: "center" });
+        pdf.setFontSize(10);
+        pdf.setFont("helvetica", "normal");
+        pdf.text(`Session: ${new Date().getFullYear()}-${new Date().getFullYear()+1}`, 105, y + 5, { align: "center" });
+        
+        y += 15;
+
+        const photoWidth = 35;
+        const detailsX = margin + photoWidth + 5;
+        const detailsWidth = width - photoWidth - 5;
+
+        pdf.rect(margin, y, photoWidth, 45);
+        
+        if (studentPhotoData) {
+          try {
+            pdf.addImage(studentPhotoData, 'JPEG', margin + 0.5, y + 0.5, photoWidth - 1, 44, undefined, 'FAST');
+          } catch (e) {
+            console.error("Error adding photo to PDF:", e);
+            pdf.setFontSize(8);
+            pdf.setTextColor(150);
+            pdf.text("PHOTO", margin + photoWidth/2, y + 22, { align: "center" });
+            pdf.setTextColor(0);
+          }
+        } else {
+          pdf.setFontSize(8);
+          pdf.setTextColor(150);
+          pdf.text("PHOTO", margin + photoWidth/2, y + 22, { align: "center" });
+          pdf.setTextColor(0);
+        }
+        
+        pdf.setFontSize(10);
+        pdf.setTextColor(0);
+        pdf.rect(margin, y + 45, photoWidth, 8);
+        pdf.setFontSize(8);
+        pdf.text("STUDENT SIGN", margin + photoWidth/2, y + 50, { align: "center" });
+
+        const rowHeight = 9;
+        const labelWidth = 35;
+        
+        const drawDetailRow = (lbl: string, val: any, yPos: number) => {
+            pdf.rect(detailsX, yPos, labelWidth, rowHeight);
+            pdf.rect(detailsX + labelWidth, yPos, detailsWidth - labelWidth, rowHeight);
+            pdf.setFont("helvetica", "bold");
+            pdf.text(String(lbl), detailsX + 2, yPos + 6);
+            pdf.setFont("helvetica", "normal");
+            pdf.text(String(val || "-"), detailsX + labelWidth + 2, yPos + 6);
+        };
+
+        drawDetailRow("Student Name", (student.student_name || "").toUpperCase(), y);
+        drawDetailRow("Roll Number", student.roll_no || "N/A", y + rowHeight);
+        drawDetailRow("Class", student.classname || "", y + rowHeight*2);
+        drawDetailRow("Father's Name", student.father_name|| "-", y + rowHeight*3);
+        drawDetailRow("Admission No", student.admission_no || "", y + rowHeight*4);
+
+        y += 65;
+
+        pdf.setFont("helvetica", "bold");
+        pdf.text("EXAMINATION SCHEDULE", margin, y);
+        y += 3;
+        
+        pdf.setFillColor(240, 240, 240);
+        pdf.rect(margin, y, width, 8, 'F');
+        pdf.rect(margin, y, width, 8, 'S');
+        pdf.text("Subject", margin + 2, y + 5.5);
+        pdf.text("Date", margin + 60, y + 5.5);
+        pdf.text("Time", margin + 100, y + 5.5);
+        pdf.text("Duration", margin + 140, y + 5.5);
+        
+        y += 8;
+        
+        pdf.setFont("helvetica", "normal");
+        if(scheduleToUse.subjects && scheduleToUse.subjects.length > 0) {
+            scheduleToUse.subjects.forEach(sub => {
+                pdf.rect(margin, y, width, 8, 'S');
+                pdf.text(String(sub.subject || "-"), margin + 2, y + 5.5);
+                pdf.text(sub.date ? new Date(sub.date).toLocaleDateString() : "-", margin + 60, y + 5.5);
+                pdf.text(String(sub.time || "-"), margin + 100, y + 5.5);
+                pdf.text(String(sub.duration || "-"), margin + 140, y + 5.5);
+                y += 8;
+            });
+        } else {
+            pdf.rect(margin, y, width, 8, 'S');
+            pdf.text("Refer to Date Sheet", margin + 2, y + 5.5);
+            y += 8;
+        }
+
+        y += 10;
+
+        pdf.setFont("helvetica", "bold");
+        pdf.setFontSize(9);
+        pdf.text("IMPORTANT INSTRUCTIONS:", margin, y);
+        y += 5;
+        pdf.setFont("helvetica", "normal");
+        pdf.setFontSize(8);
+        const instructions = [
+            "1. Candidate must carry this Admit Card to the examination hall.",
+            "2. Report to the examination center at least 30 minutes before scheduled time.",
+            "3. Electronic gadgets (Mobile, Calculator) are strictly prohibited.",
+            "4. Maintain silence and discipline inside the examination hall."
+        ];
+        instructions.forEach(inst => {
+            pdf.text(inst, margin, y);
+            y += 4;
+        });
+
+        const sigY = 270;
+        pdf.setLineWidth(0.2);
+        pdf.line(margin, sigY, margin + 40, sigY);
+        pdf.text("Class Teacher", margin + 5, sigY + 4);
+
+        pdf.line(150, sigY, 190, sigY);
+        pdf.text("Controller of Exams", 155, sigY + 4);
+    }
+  };
+
   // --- PDF GENERATION LOGIC (BULK) ---
-  const generateAdmitCardPDF = async (studentsToPrint: Student[]) => {
-    if(!examSchedule) return;
+  const generateAdmitCardPDF = async (studentsToPrint: Student[], scheduleToUse: ExamSchedule, classNameOverride?: string) => {
+    if(!scheduleToUse) {
+      toast.error("No exam schedule provided");
+      return;
+    }
     
     console.log("=== STARTING BULK PDF GENERATION ===");
     console.log(`Generating ${studentsToPrint.length} admit cards`);
+    console.log('Using schedule:', scheduleToUse);
+    console.log('Subjects in schedule:', scheduleToUse.subjects);
     
     const pdf = new jsPDF('p', 'mm', 'a4');
     
@@ -207,7 +444,7 @@ const AdmitCardManagement = () => {
         // Exam Name
         pdf.setFontSize(14);
         pdf.setFont("helvetica", "bold");
-        pdf.text(String(examSchedule.examName || "Examination").toUpperCase(), 105, y, { align: "center" });
+        pdf.text(String(scheduleToUse.examName || "Examination").toUpperCase(), 105, y, { align: "center" });
         pdf.setFontSize(10);
         pdf.setFont("helvetica", "normal");
         pdf.text(`Session: ${new Date().getFullYear()}-${new Date().getFullYear()+1}`, 105, y + 5, { align: "center" });
@@ -298,8 +535,8 @@ const AdmitCardManagement = () => {
         
         // Table Body
         pdf.setFont("helvetica", "normal");
-        if(examSchedule.subjects && examSchedule.subjects.length > 0) {
-            examSchedule.subjects.forEach(sub => {
+        if(scheduleToUse.subjects && scheduleToUse.subjects.length > 0) {
+            scheduleToUse.subjects.forEach(sub => {
                 pdf.rect(margin, y, width, 8, 'S');
                 pdf.text(String(sub.subject || "-"), margin + 2, y + 5.5);
                 pdf.text(sub.date ? new Date(sub.date).toLocaleDateString() : "-", margin + 60, y + 5.5);
@@ -343,31 +580,94 @@ const AdmitCardManagement = () => {
         pdf.text("Controller of Exams", 155, sigY + 4);
     }
 
-    pdf.save(`Admit_Cards_${selectedClass}.pdf`);
+    const className = classNameOverride || selectedClass || "Unknown";
+    pdf.save(`Admit_Cards_${className}.pdf`);
     toast.success(`Generated admit cards for ${studentsToPrint.length} students!`);
   };
 
-  const handleBulkDownload = () => {
+  const handleBulkDownload = async () => {
+    if (selectedClass === "All" && !selectedRollNo.trim()) {
+      // Download admit cards for ALL students grouped by class in ONE PDF
+      const uniqueClasses = [...new Set(students.map(s => s.classname))].sort();
+      
+      if (uniqueClasses.length === 0) {
+        toast.error("No students found");
+        return;
+      }
+
+      toast.info(`Generating admit cards for all students across ${uniqueClasses.length} classes...`);
+      
+      // Create one PDF for all students
+      const pdf = new jsPDF('p', 'mm', 'a4');
+      let isFirstPage = true;
+      let totalStudentsProcessed = 0;
+      
+      // Process each class separately
+      for (const className of uniqueClasses) {
+        const classStudents = students.filter(s => s.classname === className);
+        
+        if (classStudents.length === 0) continue;
+        
+        // Fetch exam schedule for this class
+        console.log(`[handleBulkDownload] Fetching schedule for class: ${className}`);
+        const scheduleForClass = await getExamSchedule(className);
+        
+        if (!scheduleForClass || !scheduleForClass.subjects || scheduleForClass.subjects.length === 0) {
+          console.warn(`[handleBulkDownload] No exam schedule found for class ${className}, skipping...`);
+          toast.warning(`No exam schedule for ${className}, skipped`);
+          continue;
+        }
+
+        console.log(`[handleBulkDownload] Generating admit cards for ${classStudents.length} students in ${className}`);
+        
+        // Generate admit cards for this class and add to the same PDF
+        await generateAdmitCardPDFToExisting(pdf, classStudents, scheduleForClass, isFirstPage);
+        isFirstPage = false;
+        totalStudentsProcessed += classStudents.length;
+      }
+      
+      if (totalStudentsProcessed > 0) {
+        pdf.save(`Admit_Cards_All_Classes.pdf`);
+        toast.success(`Generated admit cards for ${totalStudentsProcessed} students across ${uniqueClasses.length} classes!`);
+      } else {
+        toast.error("No admit cards generated. Please create exam schedules first.");
+      }
+      return;
+    }
+
+    // Single class or roll number specific logic
     let studentsToPrint: Student[] = [];
+    let targetClass = selectedClass;
+    
     if (selectedClass !== "All") {
       studentsToPrint = students.filter(s => s.classname === selectedClass);
     } else if (selectedRollNo.trim()) {
       const student = students.find(s => s.roll_no === selectedRollNo.trim());
-      if (student) studentsToPrint = [student];
-    } else {
-      studentsToPrint = students;
+      if (student) {
+        studentsToPrint = [student];
+        targetClass = student.classname; // Use student's class for schedule lookup
+      }
     }
 
     if (studentsToPrint.length === 0) {
       toast.error("No students found to download");
       return;
     }
-    if (!examSchedule) {
-      toast.error("Please set exam schedule first");
+
+    // Fetch exam schedule for the selected class
+    console.log('[handleBulkDownload] Fetching schedule for class:', targetClass);
+    const scheduleForClass = await getExamSchedule(targetClass);
+    
+    if (!scheduleForClass || !scheduleForClass.subjects || scheduleForClass.subjects.length === 0) {
+      toast.error(`No exam schedule found for class ${targetClass}. Please set it in the Schedule tab first.`);
       return;
     }
 
-    generateAdmitCardPDF(studentsToPrint);
+    console.log('[handleBulkDownload] Using schedule:', scheduleForClass);
+    console.log('[handleBulkDownload] Subjects:', scheduleForClass.subjects);
+    
+    // Use the fetched schedule for this class
+    generateAdmitCardPDF(studentsToPrint, scheduleForClass, targetClass);
   };
 
   const handleSaveSchedule = async () => {
@@ -504,7 +804,7 @@ const AdmitCardManagement = () => {
                   <Input placeholder="Enter Roll No" value={selectedRollNo} onChange={(e) => setSelectedRollNo(e.target.value)} />
                 </div>
                 <div className="flex items-end">
-                   <Button onClick={handleBulkDownload} disabled={!examSchedule} className="w-full">
+                   <Button onClick={handleBulkDownload} className="w-full">
                      <Download className="w-4 h-4 mr-2" /> Download Admit Cards
                    </Button>
                 </div>
@@ -513,7 +813,7 @@ const AdmitCardManagement = () => {
           </Card>
 
           {/* Live Preview using the Template Component */}
-          {examSchedule && filteredStudents.length > 0 && (
+          {previewSchedule && filteredStudents.length > 0 && (
             <Card>
               <CardHeader><CardTitle>Preview ({filteredStudents.length} Students)</CardTitle></CardHeader>
               <CardContent>
@@ -522,7 +822,7 @@ const AdmitCardManagement = () => {
                     <div key={student._id} className="border p-4 bg-gray-100 rounded-lg overflow-auto">
                         <p className="mb-2 text-sm text-center text-gray-500">Preview for {student.student_name} (Only 1 shown)</p>
                         <div className="transform scale-90 origin-top">
-                            <AdmitCardTemplate student={student} examSchedule={examSchedule} examName={examSchedule.examName} />
+                            <AdmitCardTemplate student={student} examSchedule={previewSchedule} examName={previewSchedule.examName} />
                         </div>
                     </div>
                   ))}

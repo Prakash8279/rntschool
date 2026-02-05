@@ -808,3 +808,62 @@ exports.getFeeDueByAdmissionNo = async (req, res) => {
     return res.status(500).json({ message: error });
   }
 };
+
+// Get All Student Advances
+exports.getAllStudentAdvances = async (req, res) => {
+  try {
+    const sql = `
+      SELECT admission_no, advance_amount
+      FROM fee_advances
+      WHERE advance_amount > 0
+      ORDER BY admission_no
+    `;
+
+    const [rows] = await db.execute(sql);
+    
+    const advancesMap = {};
+    rows.forEach(row => {
+      advancesMap[row.admission_no] = Number(row.advance_amount || 0);
+    });
+    
+    return res.json(advancesMap);
+  } catch (error) {
+    console.error("Error fetching all student advances:", error);
+    return res.status(500).json({ message: error.message });
+  }
+};
+
+// Get Student Advance By Admission No
+exports.getStudentAdvance = async (req, res) => {
+  try {
+    const { admissionNo } = req.params;
+
+    if (!admissionNo) {
+      return res.status(400).json({ message: "Admission No is required" });
+    }
+
+    const sql = `
+      SELECT admission_no, advance_amount
+      FROM fee_advances
+      WHERE admission_no = ?
+      LIMIT 1
+    `;
+
+    const [rows] = await db.execute(sql, [admissionNo]);
+
+    if (!rows || rows.length === 0) {
+      return res.json({
+        admission_no: admissionNo,
+        advance_amount: 0,
+      });
+    }
+
+    return res.json({
+      admission_no: rows[0].admission_no,
+      advance_amount: Number(rows[0].advance_amount || 0),
+    });
+  } catch (error) {
+    console.error("Error fetching student advance:", error);
+    return res.status(500).json({ message: error.message });
+  }
+};

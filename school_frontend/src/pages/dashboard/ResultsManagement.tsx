@@ -30,6 +30,7 @@ import { toast } from "sonner";
 import { Download, Save, RefreshCw, Upload, Settings, BarChart3, FileSpreadsheet } from "lucide-react";
 import jsPDF from "jspdf";
 import * as XLSX from 'xlsx';
+import { getExamSchedule } from "@/lib/examManagement";
 
 // Types
 interface Subject {
@@ -100,32 +101,91 @@ const ResultsManagement = () => {
   const classes = ["Nursery", "LKG", "UKG", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight"];
   const examTypes = ["Mid Term", "Final Term", "Unit Test 1", "Unit Test 2", "Unit Test 3", "Pre-Board", "Board Exam"];
 
-  // Fetch subjects from API for selected class
+  // Load grading config from database on mount
+  useEffect(() => {
+    const fetchGradingConfig = async () => {
+      try {
+        const response = await fetch('http://localhost:5000/api/settings/grading_config', {
+          headers: {
+            'Authorization': `Bearer ${userInfo?.token}`,
+          },
+        });
+        
+        if (response.ok) {
+          const data = await response.json();
+          console.log('Raw database response:', data);
+          
+          if (data.setting_value) {
+            let parsed;
+            try {
+              // Handle both string and object formats
+              if (typeof data.setting_value === 'string') {
+                parsed = JSON.parse(data.setting_value);
+              } else if (typeof data.setting_value === 'object') {
+                parsed = data.setting_value;
+              }
+              
+              if (parsed) {
+                console.log('Parsed grading config from database:', parsed);
+                setGradingConfig(parsed);
+                
+                // Recalculate grades for existing student entries
+                setStudentEntries(prev => prev.map(entry => ({
+                  ...entry,
+                  overallGrade: entry.percentage >= parsed.first.min ? "First" :
+                                entry.percentage >= parsed.second.min ? "Second" :
+                                entry.percentage >= parsed.third.min ? "Third" : "Fail"
+                })));
+                
+                toast.success('Grading configuration loaded');
+              }
+            } catch (parseError) {
+              console.error('Failed to parse grading config:', parseError, data.setting_value);
+            }
+          }
+        } else if (response.status !== 404) {
+          console.error('Failed to load grading config:', response.statusText);
+        }
+      } catch (error) {
+        console.error('Failed to load grading config:', error);
+      }
+    };
+    
+    if (userInfo?.token) {
+      fetchGradingConfig();
+    }
+  }, [userInfo?.token]);
+
+  // Fetch subjects from exam schedule for selected class
   const fetchSubjectsForClass = async (classname: string) => {
     try {
-      const token = localStorage.getItem('token');
-      const response = await fetch(`http://localhost:5000/api/subjects?class=${encodeURIComponent(classname)}`, {
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
-      });
+      console.log(`[ResultsManagement] Fetching subjects for class: ${classname}`);
       
-      if (response.ok) {
-        const data = await response.json();
-        const subjectsList: Subject[] = data.map((s: any) => ({
-          name: s.subject_name,
-          code: s.subject_code
-        }));
+      // Get exam schedule for this class
+      const schedule = await getExamSchedule(classname);
+      
+      if (schedule && schedule.subjects && schedule.subjects.length > 0) {
+        // Extract unique subjects from exam schedule
+        // Schedule.subjects is array of ExamSubject objects with {subject, date, time, duration}
+        const subjectsList: Subject[] = schedule.subjects.map((examSubject: any, index: number) => {
+          const subjectName = examSubject.subject || examSubject;
+          return {
+            name: subjectName,
+            code: subjectName.substring(0, 3).toUpperCase() || `SUB${index + 1}`
+          };
+        });
+        
         setSubjects(subjectsList);
-        console.log(`Loaded ${subjectsList.length} subjects for ${classname}:`, subjectsList);
+        console.log(`[ResultsManagement] Loaded ${subjectsList.length} subjects from exam schedule:`, subjectsList);
+        toast.success(`Loaded ${subjectsList.length} subjects from exam schedule`);
       } else {
-        console.error('Failed to fetch subjects');
-        toast.error('Failed to load subjects for this class');
+        console.warn(`[ResultsManagement] No exam schedule found for ${classname}`);
+        toast.warning(`No exam schedule found for ${classname}. You can still view students.`);
         setSubjects([]);
       }
     } catch (error) {
-      console.error('Error fetching subjects:', error);
-      toast.error('Error loading subjects');
+      console.error('[ResultsManagement] Error fetching subjects from exam schedule:', error);
+      toast.warning('Could not load exam schedule. You can still view students.');
       setSubjects([]);
     }
   };
@@ -140,11 +200,14 @@ const ResultsManagement = () => {
 
   // Fetch students when component mounts
   useEffect(() => {
+    console.log('[ResultsManagement] Fetching students list...');
     dispatch(listStudents());
   }, [dispatch]);
 
   // Load data when class and exam are selected
   useEffect(() => {
+    console.log('[ResultsManagement] Class/Exam changed:', { selectedClass, selectedExam });
+    
     if (selectedClass && selectedExam) {
       // Fetch subjects for selected class from API
       fetchSubjectsForClass(selectedClass);
@@ -156,8 +219,41 @@ const ResultsManagement = () => {
 
   // Initialize student entries when students or results or subjects change
   useEffect(() => {
-    if (selectedClass && allStudents.length > 0 && subjects.length > 0) {
+    console.log('[ResultsManagement] useEffect triggered:', {
+      selectedClass,
+      allStudentsCount: allStudents.length,
+      subjectsCount: subjects.length,
+      selectedExam
+    });
+    
+    if (selectedClass && allStudents.length > 0) {
       const classStudents = allStudents.filter((s: any) => s.classname === selectedClass);
+      
+      console.log(`[ResultsManagement] Found ${classStudents.length} students for class ${selectedClass}`);
+      
+      if (classStudents.length === 0) {
+        setStudentEntries([]);
+        return;
+      }
+      
+      // If no subjects loaded, still show students but with empty subject marks
+      if (subjects.length === 0) {
+        console.warn('[ResultsManagement] No subjects loaded for class:', selectedClass);
+        const entries: StudentResultEntry[] = classStudents.map((student: any) => ({
+          studentId: student._id,
+          studentName: student.student_name,
+          rollNo: student.roll_no || "",
+          admissionNo: student.admission_no,
+          fatherName: student.father_name || "-",
+          image: student.image || "",
+          subjects: {},
+          totalMarks: 0,
+          percentage: 0,
+          overallGrade: "Fail",
+        }));
+        setStudentEntries(entries);
+        return;
+      }
       
       const entries: StudentResultEntry[] = classStudents.map((student: any) => {
         // Check if there are existing results for this student
@@ -193,7 +289,7 @@ const ResultsManagement = () => {
 
       setStudentEntries(entries);
     }
-  }, [selectedClass, allStudents, apiResults, selectedExam, subjects]);
+  }, [selectedClass, allStudents, apiResults, selectedExam, subjects, gradingConfig]);
 
   // Update marks for a student
   const updateMarks = (admissionNo: string, subjectName: string, marks: number) => {
@@ -753,6 +849,317 @@ const ResultsManagement = () => {
     toast.success(`Report card downloaded for ${entry.studentName}`);
   };
 
+  // Generate Bulk Report Cards (All Students in One PDF)
+  const generateBulkReportCards = async () => {
+    if (!selectedClass || studentEntries.length === 0) {
+      toast.error("No results to generate report cards");
+      return;
+    }
+
+    toast.info(`Generating report cards for ${studentEntries.length} students...`);
+    
+    const pdf = new jsPDF('p', 'mm', 'a4');
+    const pageWidth = 210;
+    const pageHeight = 297;
+    const margin = 15;
+    const contentWidth = pageWidth - margin * 2;
+
+    // Pre-load school logo
+    let logoDataUrl: string | null = null;
+    try {
+      const logoImg = new Image();
+      logoImg.crossOrigin = "anonymous";
+      logoImg.src = '/src/assets/school-logo.png';
+      await new Promise((resolve, reject) => {
+        logoImg.onload = resolve;
+        logoImg.onerror = reject;
+        setTimeout(reject, 2000);
+      });
+      const canvas = document.createElement('canvas');
+      canvas.width = logoImg.width;
+      canvas.height = logoImg.height;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.drawImage(logoImg, 0, 0);
+        logoDataUrl = canvas.toDataURL('image/png');
+      }
+    } catch (e) {
+      console.warn("Could not load school logo:", e);
+    }
+
+    for (let i = 0; i < studentEntries.length; i++) {
+      const entry = studentEntries[i];
+      
+      if (i > 0) pdf.addPage();
+      
+      // Load student photo
+      let studentPhotoData: string | null = null;
+      if (entry.image) {
+        try {
+          const response = await fetch(
+            `http://localhost:5000/api/image/base64?path=${encodeURIComponent(entry.image)}`,
+            { headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` } }
+          );
+          if (response.ok) {
+            const data = await response.json();
+            if (data.success && data.data) {
+              studentPhotoData = data.data;
+            }
+          }
+        } catch (e) {
+          console.error("Error loading student photo:", e);
+        }
+      }
+
+      // Draw border
+      pdf.setDrawColor(0, 0, 0);
+      pdf.setLineWidth(1);
+      pdf.rect(8, 8, pageWidth - 16, pageHeight - 16);
+      pdf.setLineWidth(0.3);
+      pdf.rect(10, 10, pageWidth - 20, pageHeight - 20);
+      
+      let y = 18;
+      
+      // School logo
+      if (logoDataUrl) {
+        try {
+          pdf.addImage(logoDataUrl, 'PNG', margin, y, 20, 20);
+        } catch (e) {
+          console.error("Error adding logo to PDF:", e);
+        }
+      }
+      
+      // Header
+      pdf.setTextColor(0, 0, 0);
+      pdf.setFontSize(18);
+      pdf.setFont("helvetica", "bold");
+      pdf.text(SCHOOL_NAME, pageWidth / 2, y + 8, { align: "center" });
+      
+      pdf.setFontSize(9);
+      pdf.setFont("helvetica", "normal");
+      pdf.setTextColor(80, 80, 80);
+      pdf.text(SCHOOL_TAGLINE, pageWidth / 2, y + 13, { align: "center" });
+      
+      pdf.setFontSize(9);
+      pdf.setFont("helvetica", "normal");
+      pdf.setTextColor(80, 80, 80);
+      pdf.text(SCHOOL_CONTACT, pageWidth / 2, y + 18, { align: "center" });
+      
+      y = 43;
+      
+      // Line separator
+      pdf.setDrawColor(0, 0, 0);
+      pdf.setLineWidth(0.5);
+      pdf.line(margin, y, pageWidth - margin, y);
+      
+      y += 8;
+      
+      // Title
+      pdf.setTextColor(0, 0, 0);
+      pdf.setFontSize(14);
+      pdf.setFont("helvetica", "bold");
+      pdf.text("PROGRESS REPORT CARD", pageWidth / 2, y, { align: "center" });
+      
+      y += 10;
+      
+      // Student Details header
+      pdf.setDrawColor(0, 0, 0);
+      pdf.setLineWidth(0.3);
+      pdf.rect(margin, y, contentWidth, 8);
+      pdf.setFillColor(230, 230, 230);
+      pdf.rect(margin, y, contentWidth, 8, 'F');
+      pdf.rect(margin, y, contentWidth, 8, 'S');
+      pdf.setTextColor(0, 0, 0);
+      pdf.setFontSize(10);
+      pdf.setFont("helvetica", "bold");
+      pdf.text("STUDENT DETAILS", margin + 3, y + 5.5);
+      
+      y += 12;
+      
+      // Student photo
+      const photoX = pageWidth - margin - 28;
+      const photoY = y;
+      const photoWidth = 25;
+      const photoHeight = 30;
+      
+      if (studentPhotoData) {
+        pdf.addImage(studentPhotoData, 'JPEG', photoX, photoY, photoWidth, photoHeight);
+        pdf.setDrawColor(0, 0, 0);
+        pdf.setLineWidth(0.3);
+        pdf.rect(photoX, photoY, photoWidth, photoHeight);
+      } else {
+        pdf.setDrawColor(150, 150, 150);
+        pdf.setLineWidth(0.3);
+        pdf.rect(photoX, photoY, photoWidth, photoHeight);
+        pdf.setFontSize(7);
+        pdf.setTextColor(150, 150, 150);
+        pdf.text("Photo", photoX + photoWidth/2, photoY + photoHeight/2 + 2, { align: "center" });
+        pdf.setTextColor(0, 0, 0);
+      }
+      
+      // Student info
+      pdf.setFontSize(10);
+      const labelX = margin;
+      const valueX = margin + 35;
+      
+      pdf.setFont("helvetica", "bold");
+      pdf.setTextColor(80, 80, 80);
+      pdf.text("Name:", labelX, y);
+      pdf.setFont("helvetica", "normal");
+      pdf.setTextColor(0, 0, 0);
+      pdf.text(entry.studentName, valueX, y);
+      y += 6;
+      
+      pdf.setFont("helvetica", "bold");
+      pdf.setTextColor(80, 80, 80);
+      pdf.text("Admission No:", labelX, y);
+      pdf.setFont("helvetica", "normal");
+      pdf.setTextColor(0, 0, 0);
+      pdf.text(entry.admissionNo, valueX, y);
+      y += 6;
+      
+      pdf.setFont("helvetica", "bold");
+      pdf.setTextColor(80, 80, 80);
+      pdf.text("Class:", labelX, y);
+      pdf.setFont("helvetica", "normal");
+      pdf.setTextColor(0, 0, 0);
+      pdf.text(selectedClass, valueX, y);
+      y += 6;
+      
+      pdf.setFont("helvetica", "bold");
+      pdf.setTextColor(80, 80, 80);
+      pdf.text("Roll No:", labelX, y);
+      pdf.setFont("helvetica", "normal");
+      pdf.setTextColor(0, 0, 0);
+      pdf.text(entry.rollNo || '-', valueX, y);
+      y += 6;
+      
+      pdf.setFont("helvetica", "bold");
+      pdf.setTextColor(80, 80, 80);
+      pdf.text("Father's Name:", labelX, y);
+      pdf.setFont("helvetica", "normal");
+      pdf.setTextColor(0, 0, 0);
+      pdf.text(entry.fatherName || '-', valueX, y);
+      y += 6;
+      
+      pdf.setFont("helvetica", "bold");
+      pdf.setTextColor(80, 80, 80);
+      pdf.text("Exam:", labelX, y);
+      pdf.setFont("helvetica", "normal");
+      pdf.setTextColor(0, 0, 0);
+      pdf.text(selectedExam || '-', valueX, y);
+      
+      y = Math.max(y + 10, photoY + photoHeight + 5);
+      
+      // Academic performance header
+      pdf.setDrawColor(0, 0, 0);
+      pdf.setLineWidth(0.3);
+      pdf.rect(margin, y, contentWidth, 8);
+      pdf.setFillColor(230, 230, 230);
+      pdf.rect(margin, y, contentWidth, 8, 'F');
+      pdf.rect(margin, y, contentWidth, 8, 'S');
+      pdf.setTextColor(0, 0, 0);
+      pdf.setFontSize(10);
+      pdf.setFont("helvetica", "bold");
+      pdf.text("ACADEMIC PERFORMANCE", margin + 3, y + 5.5);
+      
+      y += 12;
+      
+      // Marks table header
+      const colSrWidth = 15;
+      const colSubjectWidth = 80;
+      const colMarksWidth = 40;
+      const colMaxMarksWidth = 45;
+      
+      pdf.setDrawColor(0, 0, 0);
+      pdf.setLineWidth(0.3);
+      pdf.setFillColor(245, 245, 245);
+      pdf.rect(margin, y, contentWidth, 8, 'F');
+      pdf.rect(margin, y, contentWidth, 8, 'S');
+      
+      pdf.setTextColor(0, 0, 0);
+      pdf.setFontSize(9);
+      pdf.setFont("helvetica", "bold");
+      
+      let colX = margin;
+      pdf.text("Sr.", colX + 5, y + 5.5);
+      colX += colSrWidth;
+      pdf.line(colX, y, colX, y + 8);
+      
+      pdf.text("Subject", colX + 5, y + 5.5);
+      colX += colSubjectWidth;
+      pdf.line(colX, y, colX, y + 8);
+      
+      pdf.text("Marks Obtained", colX + 5, y + 5.5);
+      colX += colMarksWidth;
+      pdf.line(colX, y, colX, y + 8);
+      
+      pdf.text("Maximum Marks", colX + 5, y + 5.5);
+      
+      y += 8;
+      
+      // Marks table body
+      pdf.setFont("helvetica", "normal");
+      subjects.forEach((subject, index) => {
+        const marks = entry.subjects[subject.name] || 0;
+        
+        pdf.rect(margin, y, contentWidth, 8, 'S');
+        
+        colX = margin;
+        pdf.text(`${index + 1}.`, colX + 3, y + 5.5);
+        colX += colSrWidth;
+        pdf.line(colX, y, colX, y + 8);
+        
+        pdf.text(subject.name, colX + 3, y + 5.5);
+        colX += colSubjectWidth;
+        pdf.line(colX, y, colX, y + 8);
+        
+        pdf.text(marks.toString(), colX + 15, y + 5.5);
+        colX += colMarksWidth;
+        pdf.line(colX, y, colX, y + 8);
+        
+        pdf.text("100", colX + 15, y + 5.5);
+        
+        y += 8;
+      });
+      
+      y += 5;
+      
+      // Summary
+      pdf.setFontSize(10);
+      pdf.setFont("helvetica", "bold");
+      pdf.text(`PERCENTAGE: ${entry.percentage.toFixed(2)}%`, margin, y);
+      y += 7;
+      pdf.text(`RESULT: ${entry.overallGrade.toUpperCase()} DIVISION`, margin, y);
+      y += 7;
+      pdf.text(`TOTAL MARKS: `, margin, y);
+      pdf.setFont("helvetica", "normal");
+      pdf.text(`${entry.totalMarks}`, margin + 35, y);
+      
+      y += 20;
+      
+      // Signatures
+      pdf.setTextColor(0, 0, 0);
+      pdf.setFont("helvetica", "normal");
+      pdf.setFontSize(9);
+      
+      pdf.setDrawColor(0, 0, 0);
+      pdf.setLineWidth(0.3);
+      pdf.line(margin, y, margin + 50, y);
+      pdf.text("Class Teacher Signature", margin, y + 5);
+      
+      pdf.line(pageWidth - margin - 50, y, pageWidth - margin, y);
+      pdf.text("Parent/Guardian Signature", pageWidth - margin - 50, y + 5);
+      
+      pdf.setFontSize(9);
+      pdf.setFont("helvetica", "normal");
+      pdf.text(`Generated Date: ${new Date().toLocaleDateString('en-IN')}`, pageWidth - margin, pageHeight - 15, { align: "right" });
+    }
+
+    pdf.save(`ReportCards_${selectedClass}_${selectedExam}_All.pdf`);
+    toast.success(`Generated report cards for ${studentEntries.length} students!`);
+  };
+
   // Generate PDF
   const generateResultsPDF = async () => {
     if (!selectedClass || studentEntries.length === 0) {
@@ -987,7 +1394,21 @@ const ResultsManagement = () => {
             </form>
           </Form>
 
-          {selectedClass && selectedExam && (
+          {!selectedClass || !selectedExam ? (
+            <div className="text-center py-10">
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-6 max-w-md mx-auto">
+                <h3 className="text-lg font-semibold text-blue-800 mb-2">Select Class and Exam</h3>
+                <p className="text-blue-700 mb-2">
+                  Please select both Class and Exam Type to view and enter results.
+                </p>
+                <div className="text-sm text-blue-600 mt-4 space-y-1">
+                  <p>✓ Class selected: {selectedClass || 'None'}</p>
+                  <p>✓ Exam selected: {selectedExam || 'None'}</p>
+                  <p>✓ Total students in database: {allStudents.length}</p>
+                </div>
+              </div>
+            </div>
+          ) : (
             <div className="space-y-6">
             <div className="flex justify-between items-center flex-wrap gap-4 mb-4">
               <h3 className="text-xl font-semibold">
@@ -1059,15 +1480,46 @@ const ResultsManagement = () => {
                           </div>
                         </div>
                       </div>
-                      <Button onClick={() => {
-                        // Recalculate all grades
-                        const updated = studentEntries.map(e => ({
-                          ...e,
-                          overallGrade: calculateGrade(e.percentage)
-                        }));
-                        setStudentEntries(updated);
-                        setShowGradingDialog(false);
-                        toast.success("Grading configuration updated");
+                      <Button onClick={async () => {
+                        try {
+                          console.log('Saving grading config to database:', gradingConfig);
+                          
+                          // Save config to database
+                          const response = await fetch('http://localhost:5000/api/settings', {
+                            method: 'POST',
+                            headers: {
+                              'Content-Type': 'application/json',
+                              'Authorization': `Bearer ${userInfo?.token}`,
+                            },
+                            body: JSON.stringify({
+                              setting_key: 'grading_config',
+                              setting_value: gradingConfig,
+                              setting_type: 'json',
+                              description: 'Grading configuration for result calculation'
+                            }),
+                          });
+                          
+                          if (!response.ok) {
+                            const errorData = await response.json();
+                            console.error('Save failed:', errorData);
+                            throw new Error('Failed to save grading configuration');
+                          }
+                          
+                          const result = await response.json();
+                          console.log('Save successful:', result);
+                          
+                          // Recalculate all grades
+                          const updated = studentEntries.map(e => ({
+                            ...e,
+                            overallGrade: calculateGrade(e.percentage)
+                          }));
+                          setStudentEntries(updated);
+                          setShowGradingDialog(false);
+                          toast.success("Grading configuration saved to database");
+                        } catch (error) {
+                          console.error('Save grading config error:', error);
+                          toast.error("Failed to save grading configuration");
+                        }
                       }}>
                         Apply Configuration
                       </Button>
@@ -1113,6 +1565,16 @@ const ResultsManagement = () => {
                 <Button onClick={saveAllResults} disabled={loading} size="sm">
                   <Save className="w-4 h-4 mr-2" />
                   Save All
+                </Button>
+                <Button
+                  onClick={generateBulkReportCards}
+                  disabled={studentEntries.length === 0}
+                  variant="default"
+                  size="sm"
+                  className="bg-green-600 hover:bg-green-700"
+                >
+                  <Download className="w-4 h-4 mr-2" />
+                  All Report Cards
                 </Button>
                 <Button
                   onClick={generateResultsPDF}
@@ -1201,6 +1663,18 @@ const ResultsManagement = () => {
               <div className="text-center py-10 text-muted-foreground">
                 No students found in class {selectedClass}
               </div>
+            ) : subjects.length === 0 ? (
+              <div className="text-center py-10">
+                <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-6 max-w-md mx-auto">
+                  <h3 className="text-lg font-semibold text-yellow-800 mb-2">No Subjects Found</h3>
+                  <p className="text-yellow-700 mb-4">
+                    No exam schedule found for class {selectedClass}. Please create an exam schedule first in the Admit Card Management section.
+                  </p>
+                  <p className="text-sm text-yellow-600">
+                    Students found: {studentEntries.length}
+                  </p>
+                </div>
+              </div>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full border-collapse border border-gray-300 text-sm">
@@ -1210,7 +1684,7 @@ const ResultsManagement = () => {
                       <th className="border p-2 text-left w-48">Student Name</th>
                       {subjects.map((s) => (
                         <th key={s.name} className="border p-2 text-center">
-                          {s.code}
+                          {s.name}
                         </th>
                       ))}
                       <th className="border p-2 text-center w-16">Total</th>
