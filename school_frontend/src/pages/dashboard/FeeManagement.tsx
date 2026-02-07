@@ -562,7 +562,6 @@ const generateDueSlipPDF = async (targetStudents: StudentFeeStatus[], isBulk = f
     pdf.setFontSize(10);
     pdf.setTextColor(100, 100, 100);
     pdf.text(SCHOOL_TAGLINE, pageWidth / 2, 26, { align: "center" });
-    pdf.text("Phone: +91-7061337068 | Email: rntpublics@gmail.com", pageWidth / 2, 31, { align: "center" });
 
       // --- Title ---
       yPos += 20;
@@ -909,7 +908,6 @@ const generateDueSlipPDF = async (targetStudents: StudentFeeStatus[], isBulk = f
     pdf.setFontSize(10);
     pdf.setTextColor(100, 100, 100);
     pdf.text(SCHOOL_TAGLINE, pageWidth / 2, 26, { align: "center" });
-    pdf.text("Phone: +91-7061337068 | Email: rntpublics@gmail.com", pageWidth / 2, 31, { align: "center" });
 
     yPos = 40;
     pdf.setFillColor(41, 58, 128); 
