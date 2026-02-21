@@ -52,22 +52,27 @@ app.use('/api/auth', limiter); // Apply stricter limit to auth routes
 app.use(cors());
 app.use(express.json({ limit: '10mb' })); // Limit body size
 
-// Cache control for GET requests (60 seconds)
+// Cache control for GET requests
 app.use((req, res, next) => {
   if (req.method === 'GET') {
-    res.set('Cache-Control', 'public, max-age=60');
+    // Fees and students should not be cached by browser to ensure fresh data after payments
+    if (req.path.startsWith('/api/fees') || req.path.startsWith('/api/students')) {
+      res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
+    } else {
+      res.set('Cache-Control', 'public, max-age=60');
+    }
   }
   next();
 });
 
 // 2. Use Routes
 app.use('/api/auth', authRoutes);
-app.use('/api/students', autoClearCache('/students'), cacheMiddleware(30000), studentRoutes); // 30s cache
+app.use('/api/students', autoClearCache('/students'), cacheMiddleware(5000), studentRoutes); // 5s cache
 app.use('/api/teachers', cacheMiddleware(60000), teacherRoutes); // 60s cache
 app.use('/api/staff', cacheMiddleware(60000), staffRoutes); // 60s cache
 app.use('/api/fees', autoClearCache('/fees'), feeRoutes);
 app.use('/api/salaries', salaryRoutes);
-app.use('/api/notices', cacheMiddleware(30000), noticeRoutes); // 30s cache
+app.use('/api/notices', autoClearCache('/notices'), cacheMiddleware(30000), noticeRoutes); // 30s cache with auto-clear
 app.use('/api/attendance', attendanceRoutes);
 app.use('/api/timetable', cacheMiddleware(120000), timetableRoutes); // 2min cache
 app.use('/api/exams', examRoutes);
@@ -76,7 +81,7 @@ app.use('/api/dashboard', cacheMiddleware(15000), dashboardRoutes); // 15s cache
 app.use('/api/expenses', expenseRoutes);
 app.use('/api/upload', uploadRoutes);
 app.use('/api/users', userRoutes);
-app.use('/api/fee-structure', autoClearCache('/fee-structure'), cacheMiddleware(300000), feeStructureRoutes); // 5min cache with auto-clear
+app.use('/api/fee-structure', autoClearCache('/fee-structure'), cacheMiddleware(10000), feeStructureRoutes); // 10s cache with auto-clear
 app.use('/api/bus', busRoutes);
 app.use('/api', assignmentRoutes);
 app.use('/api/landing', landingRoutes);

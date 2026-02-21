@@ -16,6 +16,7 @@ export interface User {
   student_name?: string;
   classname?: string;
   roll_no?: string;
+  father_name?: string;
 }
 
 interface AuthState {

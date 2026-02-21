@@ -176,9 +176,10 @@ export const getStudentFeeStatus = (
   const currentAcademicMonth = getCurrentAcademicMonthIndex();
   
   // Calculate total months to check from admission to now
-  let startMonthIndex = 0;
+  // Default: If no admission date, don't charge any fees (or start from current month)
+  let startMonthIndex = currentAcademicMonth; // Start from current month if no admission date
   let startYear = academicYearStart;
-  let totalMonthsToCalculate = currentAcademicMonth + 1;
+  let totalMonthsToCalculate = 1; // Only current month if no admission date
   
   if (admissionDate) {
     const admDate = new Date(admissionDate);
@@ -188,20 +189,17 @@ export const getStudentFeeStatus = (
       const admSessionYear = admMonth >= 3 ? admYear : admYear - 1;
 
       if (admSessionYear < academicYearStart) {
-        // Admission was in a previous academic year
-        startMonthIndex = admMonth >= 3 ? admMonth - 3 : admMonth + 9;
-        startYear = admSessionYear;
-        
-        // Calculate total months from admission to now across multiple years
-        const yearsDiff = academicYearStart - admSessionYear;
-        totalMonthsToCalculate = (yearsDiff * 12) + currentAcademicMonth + 1 - startMonthIndex;
+        // Admission was in a previous academic year - charge from April of current session
+        startMonthIndex = 0; // April
+        startYear = academicYearStart;
+        totalMonthsToCalculate = currentAcademicMonth + 1;
       } else if (admSessionYear === academicYearStart) {
-        // Admission in current academic year
+        // Admission in current academic year - charge from admission month onwards
         startMonthIndex = admMonth >= 3 ? admMonth - 3 : admMonth + 9;
         startYear = admSessionYear;
-        totalMonthsToCalculate = currentAcademicMonth + 1 - startMonthIndex;
+        totalMonthsToCalculate = Math.max(0, currentAcademicMonth + 1 - startMonthIndex);
       } else {
-        // Future admission
+        // Future admission - no charges
         totalMonthsToCalculate = 0;
       }
     }

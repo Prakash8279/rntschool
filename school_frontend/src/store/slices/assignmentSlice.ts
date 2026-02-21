@@ -26,12 +26,19 @@ export const fetchAllAssignments = createAsyncThunk(
 export const fetchAssignmentsByClass = createAsyncThunk(
   'assignments/fetchByClass',
   async (classname: string, { getState, rejectWithValue }) => {
-    const { auth } = getState() as any;
-    const res = await fetch(`${API_URL}/assignments/class/${classname}`, {
-      headers: { Authorization: `Bearer ${auth.userInfo?.token}` }
-    });
-    if (!res.ok) return rejectWithValue('Failed to fetch assignments');
-    return res.json();
+    try {
+      const { auth } = getState() as any;
+      const res = await fetch(`${API_URL}/assignments/class/${classname}`, {
+        headers: { Authorization: `Bearer ${auth.userInfo?.token}` }
+      });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        return rejectWithValue(errData.message || 'Failed to fetch assignments');
+      }
+      return res.json();
+    } catch (err: any) {
+      return rejectWithValue(err.message || 'Network error fetching assignments');
+    }
   }
 );
 
@@ -152,12 +159,19 @@ export const fetchAllQuizzes = createAsyncThunk(
 export const fetchQuizzesByClass = createAsyncThunk(
   'quizzes/fetchByClass',
   async (classname: string, { getState, rejectWithValue }) => {
-    const { auth } = getState() as any;
-    const res = await fetch(`${API_URL}/quizzes/class/${classname}`, {
-      headers: { Authorization: `Bearer ${auth.userInfo?.token}` }
-    });
-    if (!res.ok) return rejectWithValue('Failed to fetch quizzes');
-    return res.json();
+    try {
+      const { auth } = getState() as any;
+      const res = await fetch(`${API_URL}/quizzes/class/${classname}`, {
+        headers: { Authorization: `Bearer ${auth.userInfo?.token}` }
+      });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        return rejectWithValue(errData.message || 'Failed to fetch quizzes');
+      }
+      return res.json();
+    } catch (err: any) {
+      return rejectWithValue(err.message || 'Network error fetching quizzes');
+    }
   }
 );
 
@@ -267,6 +281,38 @@ export const gradeQuiz = createAsyncThunk(
 );
 
 // ============================================
+// STUDENT-SPECIFIC THUNKS
+// ============================================
+
+// Check if student already submitted an assignment
+export const fetchStudentSubmission = createAsyncThunk(
+  'assignments/fetchStudentSubmission',
+  async ({ assignmentId, admissionNo }: { assignmentId: string; admissionNo: string }, { getState, rejectWithValue }) => {
+    const { auth } = getState() as any;
+    const res = await fetch(`${API_URL}/assignments/${assignmentId}/submission/${admissionNo}`, {
+      headers: { Authorization: `Bearer ${auth.userInfo?.token}` }
+    });
+    if (!res.ok) return rejectWithValue('Failed to fetch submission');
+    const data = await res.json();
+    return { assignmentId, submission: data };
+  }
+);
+
+// Check if student already submitted a quiz
+export const fetchStudentQuizSubmission = createAsyncThunk(
+  'quizzes/fetchStudentSubmission',
+  async ({ quizId, admissionNo }: { quizId: string; admissionNo: string }, { getState, rejectWithValue }) => {
+    const { auth } = getState() as any;
+    const res = await fetch(`${API_URL}/quizzes/${quizId}/submission/${admissionNo}`, {
+      headers: { Authorization: `Bearer ${auth.userInfo?.token}` }
+    });
+    if (!res.ok) return rejectWithValue('Failed to fetch quiz submission');
+    const data = await res.json();
+    return { quizId, submission: data };
+  }
+);
+
+// ============================================
 // SLICE
 // ============================================
 
@@ -276,6 +322,9 @@ interface AssignmentState {
   currentQuiz: any | null;
   submissions: any[];
   quizSubmissions: any[];
+  // Maps: id -> submission (for student's own submissions)
+  myAssignmentSubmissions: Record<string, any>;
+  myQuizSubmissions: Record<string, any>;
   loading: boolean;
   error: string | null;
 }
@@ -286,6 +335,8 @@ const initialState: AssignmentState = {
   currentQuiz: null,
   submissions: [],
   quizSubmissions: [],
+  myAssignmentSubmissions: {},
+  myQuizSubmissions: {},
   loading: false,
   error: null
 };
@@ -313,8 +364,14 @@ const assignmentSlice = createSlice({
         state.loading = false;
         state.error = action.payload as string;
       })
+      .addCase(fetchAssignmentsByClass.pending, (state) => { state.loading = true; state.error = null; })
       .addCase(fetchAssignmentsByClass.fulfilled, (state, action) => {
+        state.loading = false;
         state.assignments = action.payload;
+      })
+      .addCase(fetchAssignmentsByClass.rejected, (state, action) => {
+        state.loading = false;
+        state.error = action.payload as string;
       })
       .addCase(createAssignment.fulfilled, (state, action) => {
         state.assignments.unshift(action.payload);
@@ -339,8 +396,14 @@ const assignmentSlice = createSlice({
         state.loading = false;
         state.error = action.payload as string;
       })
+      .addCase(fetchQuizzesByClass.pending, (state) => { state.loading = true; state.error = null; })
       .addCase(fetchQuizzesByClass.fulfilled, (state, action) => {
+        state.loading = false;
         state.quizzes = action.payload;
+      })
+      .addCase(fetchQuizzesByClass.rejected, (state, action) => {
+        state.loading = false;
+        state.error = action.payload as string;
       })
       .addCase(fetchQuizForTaking.fulfilled, (state, action) => {
         state.currentQuiz = action.payload;
@@ -357,6 +420,19 @@ const assignmentSlice = createSlice({
       })
       .addCase(fetchQuizSubmissions.fulfilled, (state, action) => {
         state.quizSubmissions = action.payload;
+      })
+      // Student's own submissions
+      .addCase(fetchStudentSubmission.fulfilled, (state, action) => {
+        const { assignmentId, submission } = action.payload;
+        if (submission) {
+          state.myAssignmentSubmissions[assignmentId] = submission;
+        }
+      })
+      .addCase(fetchStudentQuizSubmission.fulfilled, (state, action) => {
+        const { quizId, submission } = action.payload;
+        if (submission) {
+          state.myQuizSubmissions[quizId] = submission;
+        }
       });
   }
 });

@@ -67,8 +67,8 @@ const StudentResults = () => {
     });
 
     const processedGroups: GroupedResult[] = Object.entries(grouped).map(([examName, subjects]) => {
-      const totalObtained = subjects.reduce((sum, s) => sum + s.marksObtained, 0);
-      const totalMarks = subjects.reduce((sum, s) => sum + s.totalMarks, 0);
+      const totalObtained = subjects.reduce((sum, s) => sum + Number(s.marksObtained), 0);
+      const totalMarks = subjects.reduce((sum, s) => sum + Number(s.totalMarks), 0);
       const percentage = totalMarks > 0 ? (totalObtained / totalMarks) * 100 : 0;
 
       return {
@@ -109,115 +109,339 @@ const StudentResults = () => {
     return "bg-red-100 text-red-800";
   };
 
-  // Generate PDF for current exam
-  const generatePDF = () => {
+  // School Constants (same as admin report card)
+  const SCHOOL_NAME = "R.N.T. PUBLIC SCHOOL";
+  const SCHOOL_CONTACT = "Phone: +91-7061337068 | Email: rntpublics@gmail.com";
+
+  // Calculate division based on percentage (matches admin grading)
+  const calculateDivision = (percentage: number): string => {
+    if (percentage >= 90) return "First";
+    if (percentage >= 75) return "Second";
+    if (percentage >= 50) return "Third";
+    return "Fail";
+  };
+
+  // Generate PDF for current exam (same format as admin report card)
+  const generatePDF = async () => {
     if (!currentExam) {
       toast.error("Please select an exam to download");
       return;
     }
 
     const pdf = new jsPDF('p', 'mm', 'a4');
-    const margin = 20;
     const pageWidth = 210;
-    let y = 20;
+    const pageHeight = 297;
+    const margin = 15;
+    const contentWidth = pageWidth - margin * 2;
 
-    // Header
+    // Draw outer border (double line effect)
+    pdf.setDrawColor(0, 0, 0);
+    pdf.setLineWidth(1);
+    pdf.rect(8, 8, pageWidth - 16, pageHeight - 16);
+    pdf.setLineWidth(0.3);
+    pdf.rect(10, 10, pageWidth - 20, pageHeight - 20);
+
+    // Load school logo from assets
+    try {
+      const logoImg = new Image();
+      logoImg.crossOrigin = "anonymous";
+      logoImg.src = '/src/assets/school-logo.png';
+      await new Promise((resolve, reject) => {
+        logoImg.onload = resolve;
+        logoImg.onerror = reject;
+      });
+      const canvas = document.createElement('canvas');
+      canvas.width = logoImg.width;
+      canvas.height = logoImg.height;
+      const ctx = canvas.getContext('2d');
+      ctx?.drawImage(logoImg, 0, 0);
+      const logoBase64 = canvas.toDataURL('image/png');
+      pdf.addImage(logoBase64, 'PNG', margin, 14, 22, 22);
+    } catch (e) {
+      console.log('Logo not loaded', e);
+    }
+
+    // Load student photo
+    let studentPhotoData: string | null = null;
+    if (userInfo?.image) {
+      try {
+        const response = await fetch(
+          `http://localhost:5000/api/image/base64?path=${encodeURIComponent(userInfo.image)}`,
+          {
+            headers: {
+              'Authorization': `Bearer ${userInfo.token}`
+            }
+          }
+        );
+        if (response.ok) {
+          const data = await response.json();
+          if (data.success && data.data) {
+            studentPhotoData = data.data;
+          }
+        }
+      } catch (e) {
+        console.log('Student photo not loaded', e);
+      }
+    }
+
+    let y = 16;
+
+    // Header - School Name
+    pdf.setTextColor(0, 0, 0);
+    pdf.setFontSize(22);
     pdf.setFont("helvetica", "bold");
-    pdf.setFontSize(20);
-    pdf.text("R.N.T. PUBLIC SCHOOL", pageWidth / 2, y, { align: "center" });
-    
-    pdf.setFontSize(10);
+    pdf.text(SCHOOL_NAME, pageWidth / 2, y + 6, { align: "center" });
+
+    pdf.setFontSize(9);
     pdf.setFont("helvetica", "normal");
-    pdf.text("Jankinagar Basantpur, Siwan (Bihar)", pageWidth / 2, y + 6, { align: "center" });
-    
-    // Line
-    pdf.setDrawColor(0);
+    pdf.setTextColor(80, 80, 80);
+    pdf.text(SCHOOL_CONTACT, pageWidth / 2, y + 13, { align: "center" });
+
+    y = 38;
+
+    // Horizontal line separator
+    pdf.setDrawColor(0, 0, 0);
     pdf.setLineWidth(0.5);
-    pdf.line(margin, y + 15, pageWidth - margin, y + 15);
-    y += 30;
+    pdf.line(margin, y, pageWidth - margin, y);
 
-    // Title
-    pdf.setFontSize(16);
+    y += 8;
+
+    // Title - PROGRESS REPORT CARD
+    pdf.setTextColor(0, 0, 0);
+    pdf.setFontSize(14);
     pdf.setFont("helvetica", "bold");
-    pdf.text("STUDENT RESULT CARD", pageWidth / 2, y, { align: "center" });
-    y += 15;
+    pdf.text("PROGRESS REPORT CARD", pageWidth / 2, y, { align: "center" });
 
-    // Student Info
-    pdf.setFontSize(11);
-    pdf.setFont("helvetica", "normal");
-    pdf.text(`Student Name: ${userInfo?.name || userInfo?.student_name || "-"}`, margin, y);
-    y += 7;
-    pdf.text(`Admission No: ${userInfo?.admission_no || "-"}`, margin, y);
-    y += 7;
-    pdf.text(`Class: ${userInfo?.classname || "-"}`, margin, y);
-    y += 7;
-    pdf.text(`Exam: ${currentExam.examName}`, margin, y);
-    y += 15;
-
-    // Table Header
-    const colWidths = [70, 35, 35, 30];
-    pdf.setFillColor(240, 240, 240);
-    pdf.rect(margin, y, pageWidth - margin * 2, 10, 'F');
-    
-    pdf.setFont("helvetica", "bold");
-    pdf.setFontSize(10);
-    let x = margin;
-    pdf.text("Subject", x + 3, y + 7);
-    x += colWidths[0];
-    pdf.text("Marks", x + 3, y + 7);
-    x += colWidths[1];
-    pdf.text("Total", x + 3, y + 7);
-    x += colWidths[2];
-    pdf.text("Grade", x + 3, y + 7);
     y += 10;
 
-    // Table Body
+    // STUDENT DETAILS Section Header
+    pdf.setDrawColor(0, 0, 0);
+    pdf.setLineWidth(0.3);
+    pdf.rect(margin, y, contentWidth, 8);
+    pdf.setFillColor(230, 230, 230);
+    pdf.rect(margin, y, contentWidth, 8, 'F');
+    pdf.rect(margin, y, contentWidth, 8, 'S');
+    pdf.setTextColor(0, 0, 0);
+    pdf.setFontSize(10);
+    pdf.setFont("helvetica", "bold");
+    pdf.text("STUDENT DETAILS", margin + 3, y + 5.5);
+
+    y += 12;
+
+    // Student Photo in details section (right side)
+    const photoX = pageWidth - margin - 28;
+    const photoY = y;
+    const photoWidth = 25;
+    const photoHeight = 30;
+
+    if (studentPhotoData) {
+      pdf.addImage(studentPhotoData, 'JPEG', photoX, photoY, photoWidth, photoHeight);
+      pdf.setDrawColor(0, 0, 0);
+      pdf.setLineWidth(0.3);
+      pdf.rect(photoX, photoY, photoWidth, photoHeight);
+    } else {
+      pdf.setDrawColor(150, 150, 150);
+      pdf.setLineWidth(0.3);
+      pdf.rect(photoX, photoY, photoWidth, photoHeight);
+      pdf.setFontSize(7);
+      pdf.setTextColor(150, 150, 150);
+      pdf.text("Photo", photoX + photoWidth / 2, photoY + photoHeight / 2 + 2, { align: "center" });
+      pdf.setTextColor(0, 0, 0);
+    }
+
+    // Student Info Grid (left side)
+    pdf.setFontSize(10);
+    const labelX = margin;
+    const valueX = margin + 35;
+
+    // Row 1: Name
+    pdf.setFont("helvetica", "bold");
+    pdf.setTextColor(80, 80, 80);
+    pdf.text("Name:", labelX, y);
     pdf.setFont("helvetica", "normal");
+    pdf.setTextColor(0, 0, 0);
+    pdf.text(userInfo?.name || userInfo?.student_name || "-", valueX, y);
+
+    y += 6;
+
+    // Row 2: Admission No
+    pdf.setFont("helvetica", "bold");
+    pdf.setTextColor(80, 80, 80);
+    pdf.text("Admission No:", labelX, y);
+    pdf.setFont("helvetica", "normal");
+    pdf.setTextColor(0, 0, 0);
+    pdf.text(userInfo?.admission_no || "-", valueX, y);
+
+    y += 6;
+
+    // Row 3: Class
+    pdf.setFont("helvetica", "bold");
+    pdf.setTextColor(80, 80, 80);
+    pdf.text("Class:", labelX, y);
+    pdf.setFont("helvetica", "normal");
+    pdf.setTextColor(0, 0, 0);
+    pdf.text(userInfo?.classname || "-", valueX, y);
+
+    y += 6;
+
+    // Row 4: Roll No
+    pdf.setFont("helvetica", "bold");
+    pdf.setTextColor(80, 80, 80);
+    pdf.text("Roll No:", labelX, y);
+    pdf.setFont("helvetica", "normal");
+    pdf.setTextColor(0, 0, 0);
+    pdf.text(userInfo?.roll_no || "-", valueX, y);
+
+    y += 6;
+
+    // Row 5: Father's Name
+    pdf.setFont("helvetica", "bold");
+    pdf.setTextColor(80, 80, 80);
+    pdf.text("Father's Name:", labelX, y);
+    pdf.setFont("helvetica", "normal");
+    pdf.setTextColor(0, 0, 0);
+    pdf.text(userInfo?.father_name || "-", valueX, y);
+
+    y += 6;
+
+    // Row 6: Exam
+    pdf.setFont("helvetica", "bold");
+    pdf.setTextColor(80, 80, 80);
+    pdf.text("Exam:", labelX, y);
+    pdf.setFont("helvetica", "normal");
+    pdf.setTextColor(0, 0, 0);
+    pdf.text(currentExam.examName || "-", valueX, y);
+
+    // Move y to after photo area if photo is taller
+    y = Math.max(y + 10, photoY + photoHeight + 5);
+
+    // ACADEMIC PERFORMANCE Section Header
+    pdf.setDrawColor(0, 0, 0);
+    pdf.setLineWidth(0.3);
+    pdf.rect(margin, y, contentWidth, 8);
+    pdf.setFillColor(230, 230, 230);
+    pdf.rect(margin, y, contentWidth, 8, 'F');
+    pdf.rect(margin, y, contentWidth, 8, 'S');
+    pdf.setTextColor(0, 0, 0);
+    pdf.setFontSize(10);
+    pdf.setFont("helvetica", "bold");
+    pdf.text("ACADEMIC PERFORMANCE", margin + 3, y + 5.5);
+
+    y += 12;
+
+    // Table Header Row
+    pdf.setDrawColor(0, 0, 0);
+    pdf.setLineWidth(0.3);
+    pdf.setFillColor(245, 245, 245);
+    pdf.rect(margin, y, contentWidth, 8, 'F');
+    pdf.rect(margin, y, contentWidth, 8, 'S');
+
+    pdf.setTextColor(0, 0, 0);
+    pdf.setFontSize(9);
+    pdf.setFont("helvetica", "bold");
+
+    const colSubject = margin + 3;
+    const colMax = margin + 90;
+    const colObtained = margin + 120;
+    const colGrade = margin + 155;
+
+    pdf.text("Subject", colSubject, y + 5.5);
+    pdf.text("Max Marks", colMax, y + 5.5);
+    pdf.text("Obtained", colObtained, y + 5.5);
+    pdf.text("Grade", colGrade, y + 5.5);
+
+    y += 8;
+
+    // Subject Rows
+    pdf.setFont("helvetica", "normal");
+    pdf.setFontSize(9);
+
     currentExam.subjects.forEach((subject) => {
-      x = margin;
-      pdf.rect(margin, y, pageWidth - margin * 2, 8, 'S');
-      
-      pdf.text(subject.subject, x + 3, y + 6);
-      x += colWidths[0];
-      pdf.text(subject.marksObtained.toString(), x + 3, y + 6);
-      x += colWidths[1];
-      pdf.text(subject.totalMarks.toString(), x + 3, y + 6);
-      x += colWidths[2];
-      pdf.text(subject.grade, x + 3, y + 6);
-      y += 8;
+      const marks = Number(subject.marksObtained) || 0;
+      const subjectGrade = marks >= 91 ? 'A+' : marks >= 81 ? 'A' : marks >= 71 ? 'B+' : marks >= 61 ? 'B' : marks >= 51 ? 'C+' : marks >= 41 ? 'C' : marks >= 33 ? 'D' : 'F';
+
+      // Draw row border
+      pdf.setDrawColor(180, 180, 180);
+      pdf.line(margin, y + 7, margin + contentWidth, y + 7);
+
+      pdf.setTextColor(0, 0, 0);
+      pdf.text(subject.subject, colSubject, y + 5);
+      pdf.text(Number(subject.totalMarks).toString(), colMax + 10, y + 5);
+
+      pdf.setFont("helvetica", "bold");
+      pdf.text(marks.toString(), colObtained + 10, y + 5);
+      pdf.text(subjectGrade, colGrade + 5, y + 5);
+      pdf.setFont("helvetica", "normal");
+
+      y += 7;
     });
 
-    // Total Row
-    pdf.setFillColor(230, 230, 230);
-    pdf.rect(margin, y, pageWidth - margin * 2, 10, 'F');
-    pdf.rect(margin, y, pageWidth - margin * 2, 10, 'S');
-    
+    y += 3;
+
+    // Subtotal Row
+    pdf.setFillColor(245, 245, 245);
+    pdf.rect(margin, y, contentWidth, 8, 'F');
+    pdf.setDrawColor(0, 0, 0);
+    pdf.rect(margin, y, contentWidth, 8, 'S');
     pdf.setFont("helvetica", "bold");
-    x = margin;
-    pdf.text("TOTAL", x + 3, y + 7);
-    x += colWidths[0];
-    pdf.text(currentExam.totalObtained.toString(), x + 3, y + 7);
-    x += colWidths[1];
-    pdf.text(currentExam.totalMarks.toString(), x + 3, y + 7);
-    x += colWidths[2];
-    pdf.text(currentExam.grade, x + 3, y + 7);
+    pdf.setTextColor(0, 0, 0);
+    pdf.setFontSize(9);
+    pdf.text("Subtotal (Total Marks):", colSubject, y + 5.5);
+    pdf.text(`${currentExam.totalObtained} / ${currentExam.totalMarks}`, pageWidth - margin - 3, y + 5.5, { align: "right" });
+
+    y += 12;
+
+    // PERCENTAGE OBTAINED Row
+    pdf.setFillColor(220, 220, 220);
+    pdf.rect(margin, y, contentWidth, 10, 'F');
+    pdf.setDrawColor(0, 0, 0);
+    pdf.setLineWidth(0.5);
+    pdf.rect(margin, y, contentWidth, 10, 'S');
+    pdf.setTextColor(0, 0, 0);
+    pdf.setFontSize(11);
+    pdf.setFont("helvetica", "bold");
+    pdf.text("PERCENTAGE OBTAINED:", margin + 3, y + 7);
+    pdf.text(`${currentExam.percentage.toFixed(2)}%`, pageWidth - margin - 3, y + 7, { align: "right" });
+
+    y += 16;
+
+    // Result Summary
+    const division = calculateDivision(currentExam.percentage);
+    pdf.setTextColor(0, 0, 0);
+    pdf.setFontSize(10);
+    pdf.setFont("helvetica", "bold");
+
+    pdf.text(`RESULT: ${division.toUpperCase()} DIVISION`, margin, y);
+
+    y += 7;
+    pdf.text(`TOTAL MARKS: `, margin, y);
+    pdf.setFont("helvetica", "normal");
+    pdf.text(`${currentExam.totalObtained}`, margin + 35, y);
+
     y += 20;
 
-    // Summary
-    pdf.setFontSize(12);
-    pdf.text(`Percentage: ${currentExam.percentage.toFixed(2)}%`, margin, y);
-    y += 8;
-    pdf.text(`Overall Grade: ${currentExam.grade}`, margin, y);
-    y += 20;
+    // Signature Section
+    pdf.setTextColor(0, 0, 0);
+    pdf.setFont("helvetica", "normal");
+    pdf.setFontSize(9);
 
-    // Footer
-    pdf.setFontSize(8);
-    pdf.setFont("helvetica", "italic");
-    pdf.text(`Generated on: ${new Date().toLocaleDateString()}`, margin, pdf.internal.pageSize.height - 15);
-    pdf.text("This is a computer-generated document.", pageWidth - margin - 60, pdf.internal.pageSize.height - 15);
+    // Left signature
+    pdf.setDrawColor(0, 0, 0);
+    pdf.setLineWidth(0.3);
+    pdf.line(margin, y, margin + 50, y);
+    pdf.text("Class Teacher Signature", margin, y + 5);
 
-    pdf.save(`Result_${currentExam.examName.replace(/\s+/g, '_')}.pdf`);
-    toast.success("Result PDF downloaded!");
+    // Right signature
+    pdf.line(pageWidth - margin - 50, y, pageWidth - margin, y);
+    pdf.text("Parent/Guardian Signature", pageWidth - margin - 50, y + 5);
+
+    // Date at bottom right corner
+    pdf.setFontSize(9);
+    pdf.setFont("helvetica", "normal");
+    pdf.text(`Generated Date: ${new Date().toLocaleDateString('en-IN')}`, pageWidth - margin, pageHeight - 15, { align: "right" });
+
+    pdf.save(`ReportCard_${(userInfo?.name || 'Student').replace(/\s+/g, '_')}_${userInfo?.classname || ''}_${currentExam.examName.replace(/\s+/g, '_')}.pdf`);
+    toast.success("Report card downloaded!");
   };
 
   // Get available exam names from results
@@ -289,7 +513,7 @@ const StudentResults = () => {
                 <CardTitle className="text-sm font-medium text-blue-700">Total Marks</CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold text-blue-900">{currentExam.totalMarks}</div>
+                <div className="text-2xl font-bold text-blue-900">{currentExam.totalMarks.toFixed(2)}</div>
                 <p className="text-xs text-blue-700 mt-1">Maximum Marks</p>
               </CardContent>
             </Card>
@@ -299,8 +523,8 @@ const StudentResults = () => {
                 <CardTitle className="text-sm font-medium text-green-700">Obtained Marks</CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold text-green-900">{currentExam.totalObtained}</div>
-                <p className="text-xs text-green-700 mt-1">Out of {currentExam.totalMarks}</p>
+                <div className="text-2xl font-bold text-green-900">{currentExam.totalObtained.toFixed(2)}</div>
+                <p className="text-xs text-green-700 mt-1">Out of {currentExam.totalMarks.toFixed(2)}</p>
               </CardContent>
             </Card>
 
@@ -355,14 +579,14 @@ const StudentResults = () => {
                   </TableHeader>
                   <TableBody>
                     {currentExam.subjects.map((result, index) => {
-                      const subjectPercentage = Math.round((result.marksObtained / result.totalMarks) * 100);
+                      const subjectPercentage = Math.round((Number(result.marksObtained) / Number(result.totalMarks)) * 100);
                       return (
                         <TableRow key={index}>
                           <TableCell className="font-medium">{result.subject}</TableCell>
                           <TableCell className="font-bold text-green-600">
-                            {result.marksObtained}
+                            {Number(result.marksObtained).toFixed(2)}
                           </TableCell>
-                          <TableCell>{result.totalMarks}</TableCell>
+                          <TableCell>{Number(result.totalMarks).toFixed(2)}</TableCell>
                           <TableCell>{subjectPercentage}%</TableCell>
                           <TableCell>
                             <Badge className={getGradeColor(result.grade)}>

@@ -43,7 +43,9 @@ export const addNotice = createAsyncThunk(
   "notice/add",
   async (notice: Omit<Notice, "id" | "date">, { rejectWithValue }) => {
     try {
-      const { data } = await axios.post(API_URL, notice);
+      const token = localStorage.getItem('token');
+      const config = { headers: { Authorization: `Bearer ${token}` } };
+      const { data } = await axios.post(API_URL, notice, config);
       return data;
     } catch (error: any) {
       return rejectWithValue(error.response?.data?.message || "Failed to add notice");
@@ -55,7 +57,9 @@ export const deleteNotice = createAsyncThunk(
   "notice/delete",
   async (id: string, { rejectWithValue }) => {
     try {
-      await axios.delete(`${API_URL}/${id}`);
+      const token = localStorage.getItem('token');
+      const config = { headers: { Authorization: `Bearer ${token}` } };
+      await axios.delete(`${API_URL}/${id}`, config);
       return id;
     } catch (error: any) {
       return rejectWithValue(error.response?.data?.message || "Failed to delete notice");
@@ -70,8 +74,14 @@ const noticeSlice = createSlice({
   extraReducers: (builder) => {
     builder
       // Fetch
+      .addCase(fetchNotices.pending, (state) => { state.loading = true; state.error = null; })
       .addCase(fetchNotices.fulfilled, (state, action) => {
+        state.loading = false;
         state.notices = action.payload;
+      })
+      .addCase(fetchNotices.rejected, (state, action) => {
+        state.loading = false;
+        state.error = action.payload as string;
       })
       // Add
       .addCase(addNotice.fulfilled, (state, action) => {

@@ -32,7 +32,6 @@ const StudentAdmitCard = () => {
   useEffect(() => {
     dispatch(listStudents());
     dispatch(fetchAdmitCardAccess());
-    dispatch(fetchExamSchedule(undefined)); 
   }, [dispatch]);
 
   useEffect(() => {
@@ -43,8 +42,17 @@ const StudentAdmitCard = () => {
       if (foundStudent) {
         setStudent(foundStudent);
 
-        // Check Access
-        const accessRecord = accessList.find(a => a.studentId === foundStudent._id);
+        // Fetch exam schedule for this student's class
+        if (foundStudent.classname) {
+          dispatch(fetchExamSchedule(foundStudent.classname));
+        }
+
+        // Check Access - backend stores admission_no as studentId
+        const accessRecord = accessList.find(a => 
+          a.studentId === foundStudent._id || 
+          a.studentId === String(foundStudent.admission_no) ||
+          a.studentId === String(foundStudent._id)
+        );
         if (accessRecord?.allowed) {
           setHasAccess(true);
         }

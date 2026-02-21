@@ -44,11 +44,11 @@ import { fetchFeeDueByAdmissionNo, fetchAllFeeDues } from "@/store/slices/feeDue
 const SCHOOL_NAME = "R.N.T. PUBLIC SCHOOL";
 const SCHOOL_TAGLINE = "Jankinagar Basantpur, Siwan (Bihar)";
 
-// --- HELPER: Generate Unique Receipt ID ---
-const generateReceiptNo = () => {
-  const datePart = new Date().toISOString().slice(0,10).replace(/-/g, ""); // 20231025
-  const randomPart = Math.random().toString(36).substring(2, 6).toUpperCase();
-  return `REC-${datePart}-${randomPart}`;
+// --- HELPER: Generate Unique Receipt ID (incremental) ---
+const generateReceiptNo = (serialNumber: number) => {
+  const datePart = new Date().toISOString().slice(0,10).replace(/-/g, "");
+  const paddedSerial = String(serialNumber).padStart(4, '0');
+  return `RNT-${datePart}-${paddedSerial}`;
 };
 
 const FeeManagement = () => {
@@ -71,10 +71,18 @@ const FeeManagement = () => {
   const [localFeeStructure, setLocalFeeStructure] = useState<FeeStructure[]>([]);
   const [studentsFeeStatus, setStudentsFeeStatus] = useState<StudentFeeStatus[]>([]);
   const [isCalculating, setIsCalculating] = useState(false);
+  const [historyLoaded, setHistoryLoaded] = useState(false); // Track if history is loaded
+  const [dataRefreshTrigger, setDataRefreshTrigger] = useState(0); // Trigger to force recalculation after payment
   const [searchTerm, setSearchTerm] = useState("");
   const [debouncedSearchTerm, setDebouncedSearchTerm] = useState("");
   const [filterClass, setFilterClass] = useState("All");
   const [filterStatus, setFilterStatus] = useState("All");
+  
+  // Pagination state
+  const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage, setItemsPerPage] = useState(50); // Show 50 students per page
+  const [historyPage, setHistoryPage] = useState(1);
+  const [historyItemsPerPage] = useState(100); // Show 100 history items per page
     
   // Student History Search
   const [admissionNoSearch, setAdmissionNoSearch] = useState("");
@@ -98,6 +106,7 @@ const FeeManagement = () => {
   const [additionalFeeReason, setAdditionalFeeReason] = useState("");
   const [collectSearchTerm, setCollectSearchTerm] = useState("");
   const [showSuggestions, setShowSuggestions] = useState(false);
+  const [isProcessingPayment, setIsProcessingPayment] = useState(false);
 
   // Student pending fees info
   const [studentPendingInfo, setStudentPendingInfo] = useState<StudentFeeStatus | null>(null);
@@ -128,8 +137,13 @@ const FeeManagement = () => {
 
   useEffect(() => {
     if (!isAdmin) return;
-    dispatch(getFeeHistory()); 
-  }, [dispatch, isAdmin]);
+    // Load initial payment data for fee calculations (limit to recent records)
+    // This ensures fee status is calculated correctly even on collect tab
+    if (!historyLoaded) {
+      dispatch(getFeeHistory({ limit: 1000 }));
+      setHistoryLoaded(true);
+    }
+  }, [dispatch, isAdmin, historyLoaded]);
 
   useEffect(() => {
     if (!isAdmin) return;
@@ -159,12 +173,12 @@ useEffect(() => {
   if (students.length > 0 && localFeeStructure.length > 0) {
     setIsCalculating(true);
     
-    // Debounce heavy calculation to prevent UI blocking
-    const timer = setTimeout(() => {
+    // Use requestIdleCallback to avoid blocking the main thread
+    const calculateStatusesInBatches = () => {
       console.log('[FEE STATUS] Calculating for', students.length, 'students');
       console.log('[FEE STATUS] All Fee Dues loaded:', Object.keys(allFeeDues).length, 'students with dues');
       
-      // Create payment lookup map for O(1) access
+      // Create payment lookup map for O(1) access - DO THIS ONCE
       const paymentMap = new Map<string, FeeRecord[]>();
       allPayments.forEach(p => {
         const key = String(p.admissionNo);
@@ -174,66 +188,72 @@ useEffect(() => {
         paymentMap.get(key)!.push(p);
       });
       
-      const statusList = getAllStudentsFeeStatus(students, allPayments, localFeeStructure);
-      // Fix: Ensure totalPreviousDues is calculated correctly based on visible components
-      const patchedList = statusList.map(s => {
-        // Use Map for O(1) lookup instead of filter
-        const studentPayments = paymentMap.get(String(s.admissionNo)) || [];
+      // Process in smaller chunks to avoid blocking UI
+      const BATCH_SIZE = 100;
+      const statusList: StudentFeeStatus[] = [];
+      
+      for (let i = 0; i < students.length; i += BATCH_SIZE) {
+        const batch = students.slice(i, i + BATCH_SIZE);
+        const batchResults = getAllStudentsFeeStatus(batch, allPayments, localFeeStructure);
         
-        // Fallback for name-based matching if no ID match
-        if (studentPayments.length === 0) {
-          allPayments.forEach(p => {
-            if ((!p.admissionNo || p.admissionNo === "0" || p.admissionNo === 0) && 
-                p.studentName?.toLowerCase() === s.studentName?.toLowerCase() && 
-                p.classname === s.classname) {
-              studentPayments.push(p);
-            }
-          });
-        }
+        // Patch each student in batch
+        const patchedBatch = batchResults.map(s => {
+          // Use Map for O(1) lookup instead of filter
+          const studentPayments = paymentMap.get(String(s.admissionNo)) || [];
+          
+          // Fallback for name-based matching if no ID match (only if needed)
+          if (studentPayments.length === 0) {
+            allPayments.forEach(p => {
+              if ((!p.admissionNo || p.admissionNo === "0") && 
+                  p.studentName?.toLowerCase() === s.studentName?.toLowerCase() && 
+                  p.classname === s.classname) {
+                studentPayments.push(p);
+              }
+            });
+          }
+          
+          const realTotalPaid = studentPayments.reduce((sum, p) => sum + (Number(p.totalAmount) || 0), 0);
+          
+          // Get previous due amount from fee_dues table
+          const previousDueFromDB = Number(allFeeDues[String(s.admissionNo)] || 0);
+          
+          // Reconstruct Total Billed (Gross) from helper's pending + helper's paid
+          const currentPendingSum = Number(s.pendingAmount || 0) + 
+            Number(s.examFeeDues || 0) + 
+            Number(s.admissionFeeDues || 0) + 
+            Number(s.otherFeeDues || 0) + 
+            Number(s.fineDues || 0) + 
+            Number(s.dressFeeDues || 0) + 
+            Number(s.bookFeeDues || 0) +
+            previousDueFromDB;
+          const grossBilled = currentPendingSum + Number(s.totalPaid || 0);
+          
+          return {
+            ...s,
+            totalPaid: Math.round(realTotalPaid),
+            previousDues: Math.round(grossBilled),
+            totalPreviousDues: Math.round(grossBilled - realTotalPaid)
+          };
+        });
         
-        const realTotalPaid = studentPayments.reduce((sum, p) => sum + (Number(p.totalAmount) || 0), 0);
-        
-        // Get previous due amount from fee_dues table
-        const previousDueFromDB = Number(allFeeDues[String(s.admissionNo)] || 0);
-        
-        // Debug log for first few students
-        if (previousDueFromDB > 0) {
-          console.log('[FEE DUE DEBUG]', s.studentName, 'Adm:', s.admissionNo, 'Previous Due:', previousDueFromDB);
-        }
-        
-        // Reconstruct Total Billed (Gross) from helper's pending + helper's paid
-        // This ensures we get the total expected amount - use Number() to ensure numeric addition
-        // NOTE: pendingAmount already includes both tuition AND bus fees, so don't add busFeeDues separately
-        const currentPendingSum = Number(s.pendingAmount || 0) + 
-          // Number(s.busFeeDues || 0) +  // REMOVED - already included in pendingAmount
-          Number(s.examFeeDues || 0) + 
-          Number(s.admissionFeeDues || 0) + 
-          Number(s.otherFeeDues || 0) + 
-          Number(s.fineDues || 0) + 
-          Number(s.dressFeeDues || 0) + 
-          Number(s.bookFeeDues || 0) +
-          previousDueFromDB; // Add previous due amount from database
-        const grossBilled = currentPendingSum + Number(s.totalPaid || 0);
-        
-        return {
-          ...s,
-          totalPaid: Math.round(realTotalPaid),
-          previousDues: Math.round(grossBilled), // Represents Total Billed
-          totalPreviousDues: Math.round(grossBilled - realTotalPaid) // Represents Net Pending
-        };
-      });
-      setStudentsFeeStatus(patchedList);
+        statusList.push(...patchedBatch);
+      }
+      
+      setStudentsFeeStatus(statusList);
       setIsCalculating(false);
-      console.log('[FEE STATUS] Calculated statuses for', patchedList.length, 'students');
-    }, 100);
+      console.log('[FEE STATUS] Calculated statuses for', statusList.length, 'students');
+    };
     
-    return () => clearTimeout(timer);
+    // Use setTimeout with a small delay to allow UI to render first
+    const timeoutId = setTimeout(calculateStatusesInBatches, 50);
+    
+    return () => clearTimeout(timeoutId);
   }
-}, [students, allPayments, localFeeStructure, allFeeDues]);
+}, [students, allPayments, localFeeStructure, allFeeDues, dataRefreshTrigger]);
 
 // --- UPDATE SELECTED STUDENT INFO ---
 useEffect(() => {
-  if (selectedStudent && localFeeStructure.length > 0) {
+  if (selectedStudent && localFeeStructure.length > 0 && allPayments.length > 0) {
     const student = students.find(s => s._id === selectedStudent);
     if (student) {
       const status = getAllStudentsFeeStatus([student], allPayments, localFeeStructure)[0];
@@ -243,7 +263,7 @@ useEffect(() => {
           const studentPayments = allPayments.filter(p => {
               const isIdMatch = String(p.admissionNo) === String(student.admission_no);
               if (isIdMatch) return true;
-              if ((!p.admissionNo || p.admissionNo === "0" || p.admissionNo === 0) && 
+              if ((!p.admissionNo || p.admissionNo === "0") && 
                   p.studentName?.toLowerCase() === student.student_name?.toLowerCase() && 
                   p.classname === student.classname) {
                   return true;
@@ -276,7 +296,6 @@ useEffect(() => {
       // Debug: Log bus-related values
       console.log('Student Bus Debug:', {
         admission_no: student.admission_no,
-        usesBus_field: student.uses_bus,
         usesBus_prop: student.usesBus,
         bus_start_date: student.bus_start_date,
         bus_end_date: student.bus_end_date,
@@ -287,13 +306,13 @@ useEffect(() => {
       
       setStudentPendingInfo(status);
       // Check usesBus from multiple sources - student record or bus assignment data
-      setUsesBus(student.usesBus || student.uses_bus || !!student.bus_start_date || false);
+      setUsesBus(student.usesBus || !!student.bus_start_date || false);
     }
   } else {
     setStudentPendingInfo(null);
     setUsesBus(false);
   }
-}, [selectedStudent, students, allPayments, localFeeStructure]);
+}, [selectedStudent, students, allPayments, localFeeStructure, allFeeDues, dataRefreshTrigger]);
 
 // --- AUTO-UPDATE YEAR ---
 useEffect(() => {
@@ -313,7 +332,7 @@ useEffect(() => {
 
 useEffect(()=>{
   setDueAmount(Number(paymentAmount)-paidAmount);
-},[paidAmount])
+},[paidAmount, paymentAmount])
 
 // --- AUTO-CALCULATE AMOUNT ---
 useEffect(() => {
@@ -362,19 +381,39 @@ useEffect(() => {
 }, [selectedStudent, paymentMonths, selectedFeeTypes, usesBus, discountAmount, additionalAmount, students, localFeeStructure]);
   
   // Filter students based on search and filters
-  const filteredStudents = useMemo(() => studentsFeeStatus.filter(s => {
-    const matchesSearch = s.studentName.toLowerCase().includes(debouncedSearchTerm.toLowerCase()) ||
-      s.admissionNo.toLowerCase().includes(debouncedSearchTerm.toLowerCase());
-    const matchesClass = filterClass === "All" || s.classname === filterClass;
-    const matchesStatus = filterStatus === "All" || 
-      (filterStatus === "Paid" && s.totalPreviousDues <= 0) ||
-      (filterStatus === "Pending" && s.totalPreviousDues > 0);
-    return matchesSearch && matchesClass && matchesStatus;
-  }), [studentsFeeStatus, debouncedSearchTerm, filterClass, filterStatus]);
+  const filteredStudents = useMemo(() => {
+    const filtered = studentsFeeStatus.filter(s => {
+      const matchesSearch = s.studentName.toLowerCase().includes(debouncedSearchTerm.toLowerCase()) ||
+        s.admissionNo.toLowerCase().includes(debouncedSearchTerm.toLowerCase());
+      const matchesClass = filterClass === "All" || s.classname === filterClass;
+      const matchesStatus = filterStatus === "All" || 
+        (filterStatus === "Paid" && s.totalPreviousDues <= 0) ||
+        (filterStatus === "Pending" && s.totalPreviousDues > 0);
+      return matchesSearch && matchesClass && matchesStatus;
+    });
+    
+    // Sort by total pending (descending) for better UX
+    return filtered.sort((a, b) => b.totalPreviousDues - a.totalPreviousDues);
+  }, [studentsFeeStatus, debouncedSearchTerm, filterClass, filterStatus]);
+
+  // Paginate filtered students
+  const paginatedStudents = useMemo(() => {
+    const startIndex = (currentPage - 1) * itemsPerPage;
+    const endIndex = startIndex + itemsPerPage;
+    return filteredStudents.slice(startIndex, endIndex);
+  }, [filteredStudents, currentPage, itemsPerPage]);
+
+  // Pagination metadata
+  const totalPages = Math.ceil(filteredStudents.length / itemsPerPage);
+  
+  // Reset to page 1 when filters change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [debouncedSearchTerm, filterClass, filterStatus]);
 
   // Helper to resolve Admission No (handles cases where studentId might be 0 or missing)
   const resolveAdmissionNo = useCallback((payment: FeeRecord) => {
-      if (payment.admissionNo && payment.admissionNo !== "0" && payment.admissionNo !== 0) {
+      if (payment.admissionNo && payment.admissionNo !== "0") {
           return payment.admissionNo;
       }
       // Fallback: Try to find student by name and class
@@ -562,6 +601,7 @@ const generateDueSlipPDF = async (targetStudents: StudentFeeStatus[], isBulk = f
     pdf.setFontSize(10);
     pdf.setTextColor(100, 100, 100);
     pdf.text(SCHOOL_TAGLINE, pageWidth / 2, 26, { align: "center" });
+    pdf.text("Phone: +91-7061337068 | Email: rntpublics@gmail.com", pageWidth / 2, 31, { align: "center" });
 
       // --- Title ---
       yPos += 20;
@@ -675,6 +715,12 @@ const generateDueSlipPDF = async (targetStudents: StudentFeeStatus[], isBulk = f
   }, [dispatch, localFeeStructure]);
 
   const handleCollectFee = async () => {
+    // Prevent double submission
+    if (isProcessingPayment) {
+      toast.warning("Payment is already being processed...");
+      return;
+    }
+    
     // Allow payment if: Monthly Fee with months OR other individual fees without months
     const hasMonthlyFee = selectedFeeTypes.includes("Monthly Fee");
     // Bus Fee is auto-included when Monthly Fee is selected and student uses bus
@@ -690,45 +736,55 @@ const generateDueSlipPDF = async (targetStudents: StudentFeeStatus[], isBulk = f
       toast.error("Please select at least one month for Monthly/Bus Fee");
       return;
     }
-
-    // For one-time fees only (no monthly fees), amount is auto-calculated
-    // For monthly fees, amount must be filled
-    if (hasRecurringFee && !paymentAmount) {
-      toast.error("Please enter the payment amount");
-      return;
-    }
     
-    // Parse user entered amount (e.g. 3000)
-    const userEnteredTotal = Number(paymentAmount);
-    if (isNaN(userEnteredTotal) || userEnteredTotal < 0) {
-        toast.error("Invalid payment amount");
+    // Set processing state
+    setIsProcessingPayment(true);
+
+    try {
+      // For one-time fees only (no monthly fees), amount is auto-calculated
+      // For monthly fees, amount must be filled
+      if (hasRecurringFee && !paymentAmount) {
+        toast.error("Please enter the payment amount");
         return;
-    }
+      }
+      
+      // Parse user entered amount (e.g. 3000)
+      const userEnteredTotal = Number(paymentAmount);
+      if (isNaN(userEnteredTotal) || userEnteredTotal < 0) {
+          toast.error("Invalid payment amount");
+          return;
+      }
 
-    const student = students.find(s => s._id === selectedStudent);
-    if (!student) { toast.error("Student not found"); return; }
+      const student = students.find(s => s._id === selectedStudent);
+      if (!student) { 
+        toast.error("Student not found"); 
+        return; 
+      }
 
-    const feeStruct = localFeeStructure.find(f => f.classname === student.classname);
-    if (!feeStruct) { toast.error("Fee structure not found"); return; }
+      const feeStruct = localFeeStructure.find(f => f.classname === student.classname);
+      if (!feeStruct) { 
+        toast.error("Fee structure not found"); 
+        return; 
+      }
 
-    // Duplicate Check
-    const duplicates: string[] = [];
-    for (const month of paymentMonths) {
-       // Check specifically for the fee type being paid
-       if (hasMonthlyFee) {
-           const exists = allPayments.some(p => String(p.admissionNo) === String(student.admission_no) && p.month === month && String(p.year) === String(paymentYear) && p.monthly_fees > 0);
-           if (exists) duplicates.push(`Monthly Fee: ${month} ${paymentYear}`);
-       }
-       if (hasBusFee) {
-           const exists = allPayments.some(p => String(p.admissionNo) === String(student.admission_no) && p.month === month && String(p.year) === String(paymentYear) && p.bus_fee > 0);
-           if (exists) duplicates.push(`Bus Fee: ${month} ${paymentYear}`);
-       }
-    }
+      // Duplicate Check
+      const duplicates: string[] = [];
+      for (const month of paymentMonths) {
+         // Check specifically for the fee type being paid
+         if (hasMonthlyFee) {
+             const exists = allPayments.some(p => String(p.admissionNo) === String(student.admission_no) && p.month === month && String(p.year) === String(paymentYear) && p.monthly_fees > 0);
+             if (exists) duplicates.push(`Monthly Fee: ${month} ${paymentYear}`);
+         }
+         if (hasBusFee) {
+             const exists = allPayments.some(p => String(p.admissionNo) === String(student.admission_no) && p.month === month && String(p.year) === String(paymentYear) && p.bus_fee > 0);
+             if (exists) duplicates.push(`Bus Fee: ${month} ${paymentYear}`);
+         }
+      }
 
-    if (duplicates.length > 0) {
-      toast.error(`Fees already collected for: ${duplicates.join(", ")}`);
-      return;
-    }
+      if (duplicates.length > 0) {
+        toast.error(`Fees already collected for: ${duplicates.join(", ")}`);
+        return;
+      }
 
     const paymentsToProcess: FeeRecord[] = [];
     const generatedReceipts: FeeRecord[] = [];
@@ -751,10 +807,16 @@ const generateDueSlipPDF = async (targetStudents: StudentFeeStatus[], isBulk = f
     // If no months selected but have other fees, create a single record for "Miscellaneous"
     const monthsToProcess = paymentMonths.length > 0 ? paymentMonths : ["Miscellaneous"];
 
+    // Find the highest existing receipt serial number to continue incrementing
+    const maxSerial = allPayments.reduce((max, p) => {
+      const match = (p.receiptNo || '').match(/(\d+)$/);
+      return match ? Math.max(max, parseInt(match[1], 10)) : max;
+    }, 0);
+
     for (let i = 0; i < monthsToProcess.length; i++) {
 
-      // To generate unique receipt per record
-      const receiptId = generateReceiptNo();
+      // To generate unique receipt per record (incremental)
+      const receiptId = generateReceiptNo(maxSerial + i + 1);
 
       const month = monthsToProcess[i];
       let currentNotes = paymentNotes;
@@ -844,10 +906,43 @@ const generateDueSlipPDF = async (targetStudents: StudentFeeStatus[], isBulk = f
     console.log('Generated receipts:', generatedReceipts.map(r => `${r.month} ${r.year}`));
 
     if (successCount > 0) {
-      toast.success(`Fees collected successfully!`);
+      toast.success(`Fees collected successfully! Refreshing data...`);
+      
+      // Immediately refresh all relevant data in parallel for instant UI update
+      try {
+        console.log('[PAYMENT REFRESH] Starting data refresh...');
+        // Use .unwrap() to ensure the actions complete successfully
+        await Promise.all([
+          dispatch(getFeeHistory({ limit: 1000 })).unwrap(),
+          dispatch(listStudents()).unwrap(),
+          dispatch(fetchAllFeeDues()).unwrap(),
+          dispatch(fetchFeeDueByAdmissionNo(String(student.admission_no))).unwrap()
+        ]);
+        
+        console.log('[PAYMENT REFRESH] All data fetched, waiting for state propagation...');
+        // Give React time to propagate state changes and trigger useEffect recalculations
+        // This ensures the fee status list is recalculated with the new payment data
+        await new Promise(resolve => setTimeout(resolve, 800));
+        
+        // Force recalculation of fee statuses by updating the trigger
+        console.log('[PAYMENT REFRESH] Triggering fee recalculation...');
+        setDataRefreshTrigger(prev => prev + 1);
+        
+        // Small additional delay to ensure the recalculation completes
+        await new Promise(resolve => setTimeout(resolve, 200));
+        
+        console.log('[PAYMENT REFRESH] Data refresh complete!');
+        toast.success(`Payment processed and data updated!`);
+      } catch (error) {
+        console.error('Error refreshing data:', error);
+        toast.warning('Fees collected but data refresh delayed. Please refresh the page.');
+      }
+      
+      // Generate PDF after data refresh
       generateCombinedFeeReceiptPDF(generatedReceipts, student, studentPendingInfo || undefined);
-      setSelectedStudent("");
-      setCollectSearchTerm("");
+      
+      // Clear form inputs but keep student selected to show updated dues
+      // Don't clear: selectedStudent, collectSearchTerm, studentPendingInfo (will auto-recalculate)
       setPaymentMonths([]);
       setPaymentAmount("");
       setSelectedFeeTypes([]);
@@ -856,8 +951,14 @@ const generateDueSlipPDF = async (targetStudents: StudentFeeStatus[], isBulk = f
       setDiscountAmount(0);
       setAdditionalAmount(0);
       setAdditionalFeeReason("");
-      setStudentPendingInfo(null);
-      dispatch(getFeeHistory());
+    }
+    
+    } catch (error) {
+      console.error('Payment processing error:', error);
+      toast.error('An unexpected error occurred during payment processing');
+    } finally {
+      // Always reset processing state, even if there's an error
+      setIsProcessingPayment(false);
     }
   };
 
@@ -908,6 +1009,7 @@ const generateDueSlipPDF = async (targetStudents: StudentFeeStatus[], isBulk = f
     pdf.setFontSize(10);
     pdf.setTextColor(100, 100, 100);
     pdf.text(SCHOOL_TAGLINE, pageWidth / 2, 26, { align: "center" });
+    pdf.text("Phone: +91-7061337068 | Email: rntpublics@gmail.com", pageWidth / 2, 31, { align: "center" });
 
     yPos = 40;
     pdf.setFillColor(41, 58, 128); 
@@ -1351,7 +1453,7 @@ const generateDueSlipPDF = async (targetStudents: StudentFeeStatus[], isBulk = f
     const payments = allPayments.filter(p => {
         const isIdMatch = String(p.admissionNo) === String(student.admission_no);
         if (isIdMatch) return true;
-        if ((!p.admissionNo || p.admissionNo === "0" || p.admissionNo === 0) && 
+        if ((!p.admissionNo || p.admissionNo === "0") && 
             p.studentName?.toLowerCase() === student.student_name?.toLowerCase() && 
             p.classname === student.classname) {
             return true;
@@ -1502,7 +1604,16 @@ const generateDueSlipPDF = async (targetStudents: StudentFeeStatus[], isBulk = f
               </div>
 
               {/* RESTORED PENDING INFO CARD */}
-              {studentPendingInfo && (
+              {loading || dueLoading ? (
+                <Card className="bg-gray-50">
+                  <CardContent className="py-8">
+                    <div className="flex flex-col items-center justify-center gap-3">
+                      <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
+                      <p className="text-sm text-gray-600">Loading fee information...</p>
+                    </div>
+                  </CardContent>
+                </Card>
+              ) : studentPendingInfo && (
                 <Card className={`${studentPendingInfo.totalPreviousDues <= 0 ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-300'}`}>
                   <CardHeader className="pb-3">
                     <CardTitle className={`text-lg ${studentPendingInfo.totalPreviousDues <= 0 ? 'text-green-800' : 'text-red-800'}`}>
@@ -1514,6 +1625,18 @@ const generateDueSlipPDF = async (targetStudents: StudentFeeStatus[], isBulk = f
                       <div className="text-center py-4">
                         <CheckCircle2 className="w-12 h-12 text-green-600 mx-auto mb-2" />
                         <p className="text-green-700 font-medium">All Fees Are Paid</p>
+                        {/* Show advance amount if student has credit balance */}
+                        {studentPendingInfo.totalPreviousDues < 0 && (
+                          <div className="bg-green-100 border-l-4 border-green-600 p-4 rounded mt-4 text-left">
+                            <div className="flex justify-between items-center">
+                              <span className="text-lg font-bold text-green-800">💰 ADVANCE BALANCE:</span>
+                              <span className="text-3xl font-bold text-green-600">
+                                ₹{Math.abs(studentPendingInfo.totalPreviousDues).toLocaleString()}
+                              </span>
+                            </div>
+                            <p className="text-sm text-green-700 mt-2">This advance will be automatically adjusted in the next payment</p>
+                          </div>
+                        )}
                       </div>
                     ) : (
                       <>
@@ -1542,8 +1665,8 @@ const generateDueSlipPDF = async (targetStudents: StudentFeeStatus[], isBulk = f
                           const dressDues = selectedFeeTypes.includes("Dress Fee") ? 0 : Number(studentPendingInfo.dressFeeDues || 0);
                           const bookDues = selectedFeeTypes.includes("Book Fee") ? 0 : Number(studentPendingInfo.bookFeeDues || 0);
                           
-                          // Total remaining dues (including previous due amount from database)
-                          const totalDues = combinedMonthlyBusDues + examDues + admissionDues + otherDues + fineDues + dressDues + bookDues + (previousDueAmount > 0 ? previousDueAmount : 0);
+                          // Total remaining dues (including previous due/advance amount from database)
+                          const totalDues = Math.max(0, combinedMonthlyBusDues + examDues + admissionDues + otherDues + fineDues + dressDues + bookDues + previousDueAmount);
                           
                           return (
                             <div className="bg-red-100 border-l-4 border-red-600 p-4 rounded">
@@ -1692,6 +1815,17 @@ const generateDueSlipPDF = async (targetStudents: StudentFeeStatus[], isBulk = f
                                 <p className="text-xs text-gray-600 font-semibold">Previous Due Amount</p>
                                 <p className="text-xl font-bold text-red-700">₹{previousDueAmount || 0}</p>
                                 <p className="text-xs text-gray-500 mt-1">Previous Due</p>
+                              </div>
+                            )}
+
+                            {/* Advance (from DB negative due or calculated advance) */}
+                            {studentPendingInfo.totalPreviousDues < 0 && (
+                              <div className="bg-green-50 border-2 border-green-500 p-3 rounded">
+                                <p className="text-xs text-green-700 font-semibold">💰 ADVANCE</p>
+                                <p className="text-xl font-bold text-green-700">
+                                  ₹{Math.abs(studentPendingInfo.totalPreviousDues).toLocaleString()}
+                                </p>
+                                <p className="text-xs text-green-600 mt-1">Credit balance</p>
                               </div>
                             )}
                           </div>
@@ -1953,10 +2087,17 @@ const generateDueSlipPDF = async (targetStudents: StudentFeeStatus[], isBulk = f
                             <span>₹{Math.max(0, paidAmount).toLocaleString()}</span>
                           </div>
 
-                          <div className="flex justify-between text-sm text-red-600">
-                            <span>Remaining Amount Due:</span>
-                            <span>₹{dueAmount}</span>
-                          </div>
+                          {dueAmount >= 0 ? (
+                            <div className="flex justify-between text-sm text-red-600">
+                              <span>Remaining Amount Due:</span>
+                              <span>₹{dueAmount.toLocaleString()}</span>
+                            </div>
+                          ) : (
+                            <div className="flex justify-between text-sm text-green-600 font-semibold">
+                              <span>💰 Advance Amount:</span>
+                              <span>₹{Math.abs(dueAmount).toLocaleString()}</span>
+                            </div>
+                          )}
                         </>
                       );
                     })()}
@@ -1964,7 +2105,25 @@ const generateDueSlipPDF = async (targetStudents: StudentFeeStatus[], isBulk = f
                 </div>
               )}
 
-              <Button onClick={handleCollectFee} className="w-full">Submit Payment</Button>
+              <Button 
+                onClick={handleCollectFee} 
+                className="w-full" 
+                disabled={isProcessingPayment || !selectedStudent || loading || dueLoading}
+              >
+                {isProcessingPayment ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Processing Payment...
+                  </>
+                ) : (loading || dueLoading) ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Loading Fee Data...
+                  </>
+                ) : (
+                  "Submit Payment"
+                )}
+              </Button>
             </CardContent>
           </Card>
         </TabsContent>
@@ -2026,10 +2185,17 @@ const generateDueSlipPDF = async (targetStudents: StudentFeeStatus[], isBulk = f
                        </TableRow>
                     </TableHeader>
                     <TableBody>
-                       {filteredStudents?.length === 0 ? (
+                       {isCalculating ? (
+                         <TableRow>
+                           <TableCell colSpan={9} className="text-center py-8">
+                             <Loader2 className="h-6 w-6 animate-spin mx-auto mb-2" />
+                             <p className="text-sm text-gray-500">Calculating fee status...</p>
+                           </TableCell>
+                         </TableRow>
+                       ) : paginatedStudents?.length === 0 ? (
                            <TableRow><TableCell colSpan={9} className="text-center">No students found.</TableCell></TableRow>
                        ) : (
-                           filteredStudents?.map(s => (
+                           paginatedStudents?.map(s => (
                               <TableRow key={s.admissionNo}>
                                  <TableCell>
                                      <div className="font-medium">{s.studentName}</div>
@@ -2041,13 +2207,8 @@ const generateDueSlipPDF = async (targetStudents: StudentFeeStatus[], isBulk = f
                                  <TableCell className={s.pendingAmount > 0 ? "text-red-600 font-bold" : "text-green-600"}>₹{s.pendingAmount}</TableCell>
                                  <TableCell className="text-xs text-gray-600">
                                     {(() => {
-                                        const dues = [];
-                                        // Note: Bus fee is already included in Monthly Pending, so don't show here
+                                        const dues: string[] = [];
                                         const prevDueFromDB = Number(allFeeDues[String(s.admissionNo)] || 0);
-                                        // Show advance payment in green if negative (student has credit)
-                                        if (prevDueFromDB < 0) {
-                                            return <span className="text-green-600 font-semibold">Advance: ₹{Math.abs(prevDueFromDB)}</span>;
-                                        }
                                         if (prevDueFromDB > 0) dues.push(`Prev Due: ₹${prevDueFromDB}`);
                                         if (s.examFeeDues > 0) dues.push(`Exam: ₹${s.examFeeDues}`);
                                         if (s.admissionFeeDues > 0) dues.push(`Adm: ₹${s.admissionFeeDues}`);
@@ -2055,11 +2216,16 @@ const generateDueSlipPDF = async (targetStudents: StudentFeeStatus[], isBulk = f
                                         if (s.bookFeeDues > 0) dues.push(`Book: ₹${s.bookFeeDues}`);
                                         if (s.fineDues > 0) dues.push(`Fine: ₹${s.fineDues}`);
                                         if (s.otherFeeDues > 0) dues.push(`Other: ₹${s.otherFeeDues}`);
+                                        // Use totalPreviousDues for advance — it's the accurate net calculation
+                                        if (s.totalPreviousDues < 0) {
+                                            const advanceAmt = Math.abs(s.totalPreviousDues);
+                                            return <>{dues.length > 0 && <span>{dues.join(", ")}, </span>}<span className="text-green-600 font-semibold">Advance: ₹{advanceAmt}</span></>;
+                                        }
                                         return dues.length > 0 ? dues.join(", ") : "-";
                                     })()}
                                  </TableCell>
                                  <TableCell className={s.totalPreviousDues > 0 ? "text-red-600 font-bold" : "text-green-600"}>
-                                     {s.totalPreviousDues < 0 ? `-₹${Math.abs(s.totalPreviousDues)}` : `₹${s.totalPreviousDues}`}
+                                     {s.totalPreviousDues < 0 ? `Advance: ₹${Math.abs(s.totalPreviousDues)}` : `₹${s.totalPreviousDues}`}
                                  </TableCell>
                                  <TableCell>
                                      <Badge variant={s.totalPreviousDues > 0 ? "destructive" : "default"} className={s.totalPreviousDues <= 0 ? "bg-green-600" : ""}>
@@ -2084,6 +2250,71 @@ const generateDueSlipPDF = async (targetStudents: StudentFeeStatus[], isBulk = f
                        )}
                     </TableBody>
                  </Table>
+                 
+                 {/* Pagination Controls */}
+                 {!isCalculating && filteredStudents.length > 0 && (
+                   <div className="flex items-center justify-between mt-4 pt-4 border-t">
+                     <div className="flex items-center gap-4">
+                       <div className="text-sm text-gray-600">
+                         Showing {((currentPage - 1) * itemsPerPage) + 1} to {Math.min(currentPage * itemsPerPage, filteredStudents.length)} of {filteredStudents.length} students
+                       </div>
+                       <Select 
+                         value={itemsPerPage.toString()} 
+                         onValueChange={(value) => {
+                           setItemsPerPage(Number(value));
+                           setCurrentPage(1);
+                         }}
+                       >
+                         <SelectTrigger className="w-[100px] h-8">
+                           <SelectValue />
+                         </SelectTrigger>
+                         <SelectContent>
+                           <SelectItem value="25">25 / page</SelectItem>
+                           <SelectItem value="50">50 / page</SelectItem>
+                           <SelectItem value="100">100 / page</SelectItem>
+                           <SelectItem value="200">200 / page</SelectItem>
+                         </SelectContent>
+                       </Select>
+                     </div>
+                     <div className="flex items-center gap-2">
+                       <Button
+                         variant="outline"
+                         size="sm"
+                         onClick={() => setCurrentPage(1)}
+                         disabled={currentPage === 1}
+                       >
+                         First
+                       </Button>
+                       <Button
+                         variant="outline"
+                         size="sm"
+                         onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                         disabled={currentPage === 1}
+                       >
+                         Previous
+                       </Button>
+                       <div className="text-sm font-medium px-4">
+                         Page {currentPage} of {totalPages}
+                       </div>
+                       <Button
+                         variant="outline"
+                         size="sm"
+                         onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+                         disabled={currentPage === totalPages}
+                       >
+                         Next
+                       </Button>
+                       <Button
+                         variant="outline"
+                         size="sm"
+                         onClick={() => setCurrentPage(totalPages)}
+                         disabled={currentPage === totalPages}
+                       >
+                         Last
+                       </Button>
+                     </div>
+                   </div>
+                 )}
               </CardContent>
            </Card>
         </TabsContent>
@@ -2154,13 +2385,10 @@ const generateDueSlipPDF = async (targetStudents: StudentFeeStatus[], isBulk = f
                                  <TableCell className="text-red-600 font-semibold">₹{s.pendingAmount}</TableCell>
                                  <TableCell className="text-xs">
                                     {(() => {
-                                        const dues = [];
-                                        // Note: Bus fee is already included in Monthly Pending, so don't show here
+                                        const dues: string[] = [];
                                         const prevDueFromDB = Number(allFeeDues[String(s.admissionNo)] || 0);
-                                        // Show advance payment in green if negative (student has credit)
-                                        if (prevDueFromDB < 0) {
-                                            return <span className="text-green-600 font-semibold">Advance: ₹{Math.abs(prevDueFromDB)}</span>;
-                                        }
+                                        const calcAdvance = Number(s.advanceAmount || 0);
+                                        const advanceAmt = prevDueFromDB < 0 ? Math.max(Math.abs(prevDueFromDB), calcAdvance) : calcAdvance;
                                         if (prevDueFromDB > 0) dues.push(`Prev Due: ₹${prevDueFromDB}`);
                                         if (s.examFeeDues > 0) dues.push(`Exam: ₹${s.examFeeDues}`);
                                         if (s.admissionFeeDues > 0) dues.push(`Adm: ₹${s.admissionFeeDues}`);
@@ -2168,6 +2396,9 @@ const generateDueSlipPDF = async (targetStudents: StudentFeeStatus[], isBulk = f
                                         if (s.bookFeeDues > 0) dues.push(`Book: ₹${s.bookFeeDues}`);
                                         if (s.fineDues > 0) dues.push(`Fine: ₹${s.fineDues}`);
                                         if (s.otherFeeDues > 0) dues.push(`Other: ₹${s.otherFeeDues}`);
+                                        if (advanceAmt > 0) {
+                                            return <>{dues.length > 0 && <span>{dues.join(", ")}, </span>}<span className="text-green-600 font-semibold">Advance: ₹{advanceAmt}</span></>;
+                                        }
                                         return dues.length > 0 ? dues.join(", ") : "-";
                                     })()}
                                  </TableCell>

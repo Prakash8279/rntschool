@@ -58,9 +58,57 @@ const calculateLateFee = (dueDate, paymentDate, monthlyFee, lateFeeConfig) => {
 // --- GET FEE HISTORY ---
 exports.getFeeHistory = async (req, res) => {
   try {
-    const { academic_year, classname, month, payment_mode, limit } = req.query;
+    const { 
+      academic_year, 
+      classname, 
+      month, 
+      payment_mode, 
+      limit = '1000',  // Default limit for performance
+      offset = '0',     // Support pagination
+      student_id       // Filter by specific student
+    } = req.query;
 
-    let query = "SELECT * FROM fee_collections WHERE 1=1";
+    // Count total records first (for pagination)
+    let countQuery = "SELECT COUNT(*) as total FROM fee_collections WHERE 1=1";
+    const countParams = [];
+
+    if (academic_year) {
+      countQuery += " AND year = ?";
+      countParams.push(academic_year);
+    }
+
+    if (classname) {
+      countQuery += " AND classname = ?";
+      countParams.push(classname);
+    }
+
+    if (month) {
+      countQuery += " AND month = ?";
+      countParams.push(month);
+    }
+
+    if (payment_mode) {
+      countQuery += " AND payment_mode = ?";
+      countParams.push(payment_mode);
+    }
+
+    if (student_id) {
+      countQuery += " AND admission_no = ?";
+      countParams.push(student_id);
+    }
+
+    const [countResult] = await db.execute(countQuery, countParams);
+    const totalRecords = countResult[0]?.total || 0;
+
+    // Main query with optimized columns (reduce data transfer)
+    let query = `SELECT 
+      id, admission_no, student_name, classname, roll_no, 
+      month, year, monthly_fees, exam_fees, annual_fee, 
+      other_fee, bus_fee, dress_fee, book_fee, fine, late_fee,
+      discount, scholarship, total_amount, payment_date, 
+      payment_mode, receipt_no, notes, uses_bus, is_partial, 
+      payment_type, academic_year 
+    FROM fee_collections WHERE 1=1`;
     const params = [];
 
     if (academic_year) {
@@ -83,18 +131,22 @@ exports.getFeeHistory = async (req, res) => {
       params.push(payment_mode);
     }
 
+    if (student_id) {
+      query += " AND admission_no = ?";
+      params.push(student_id);
+    }
+
     query += " ORDER BY payment_date DESC";
     
-    // Only apply LIMIT if explicitly requested
-    if (limit) {
-      const safeLimit = Math.min(parseInt(limit), 50000);
-      query += " LIMIT ?";
-      params.push(safeLimit);
-    }
+    // Apply pagination
+    const safeLimit = Math.min(parseInt(limit), 5000); // Max 5000 records per request
+    const safeOffset = Math.max(0, parseInt(offset));
+    query += " LIMIT ? OFFSET ?";
+    params.push(safeLimit, safeOffset);
 
     const [rows] = await db.execute(query, params);
 
-    console.log(`[getFeeHistory] Returning ${rows.length} fee collection records`);
+    console.log(`[getFeeHistory] Returning ${rows.length} of ${totalRecords} fee collection records (paginated)`);
 
     // Map database columns to frontend expected format
     const history = rows.map((f) => ({
@@ -127,7 +179,18 @@ exports.getFeeHistory = async (req, res) => {
       academic_year: f.academic_year || f.year,
     }));
 
-    res.json(history);
+    // Return paginated response with metadata
+    res.json({
+      data: history,
+      pagination: {
+        total: totalRecords,
+        limit: safeLimit,
+        offset: safeOffset,
+        currentPage: Math.floor(safeOffset / safeLimit) + 1,
+        totalPages: Math.ceil(totalRecords / safeLimit),
+        hasMore: (safeOffset + safeLimit) < totalRecords
+      }
+    });
   } catch (err) {
     console.error("Error fetching fee history:", err);
     res.status(500).json({ message: err.message });
@@ -754,7 +817,7 @@ exports.deleteFeeRecord = async (req, res) => {
 // Get All Fee Dues
 exports.getAllFeeDues = async (req, res) => {
   try {
-    const sql = `SELECT admission_no, due_amount FROM fee_dues WHERE due_amount > 0`;
+    const sql = `SELECT admission_no, due_amount FROM fee_dues WHERE due_amount != 0`;
     const [rows] = await db.execute(sql);
     
     // Return as object map for easy lookup

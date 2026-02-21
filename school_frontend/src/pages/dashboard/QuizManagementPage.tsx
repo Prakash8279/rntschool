@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { Plus, Trash2, Eye, CheckCircle, Clock, HelpCircle, X } from "lucide-react";
+import { Plus, Trash2, Eye, CheckCircle, Clock, HelpCircle, X, Edit } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 
 const CLASSES = ["Nursery", "LKG", "UKG", "1st", "2nd", "3rd", "4th", "5th", "6th", "7th", "8th"];
@@ -33,8 +33,14 @@ export default function QuizManagementPage() {
 
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [isViewOpen, setIsViewOpen] = useState(false);
+  const [isGradeOpen, setIsGradeOpen] = useState(false);
   const [selectedQuiz, setSelectedQuiz] = useState<any>(null);
+  const [selectedSubmission, setSelectedSubmission] = useState<any>(null);
   const [filterClass, setFilterClass] = useState<string>("");
+  
+  const [gradeForm, setGradeForm] = useState({
+    manual_marks: "",
+  });
   
   const [form, setForm] = useState({
     title: "",
@@ -133,6 +139,35 @@ export default function QuizManagementPage() {
     setSelectedQuiz(quiz);
     await dispatch(fetchQuizSubmissions(quiz._id));
     setIsViewOpen(true);
+  };
+
+  const openGradeDialog = (submission: any) => {
+    setSelectedSubmission(submission);
+    setGradeForm({
+      manual_marks: submission.manual_marks?.toString() || "",
+    });
+    setIsGradeOpen(true);
+  };
+
+  const handleGradeQuiz = async () => {
+    if (!selectedSubmission) return;
+    
+    await dispatch(gradeQuiz({
+      id: selectedSubmission._id,
+      data: {
+        manual_marks: parseFloat(gradeForm.manual_marks) || 0,
+        graded_by: user?.name
+      }
+    }));
+
+    toast({ title: "Graded", description: "Quiz graded successfully" });
+    setIsGradeOpen(false);
+    setGradeForm({ manual_marks: "" });
+    
+    // Refresh submissions
+    if (selectedQuiz) {
+      dispatch(fetchQuizSubmissions(selectedQuiz._id));
+    }
   };
 
   return (
@@ -377,6 +412,7 @@ export default function QuizManagementPage() {
                   <TableHead>Manual Marks</TableHead>
                   <TableHead>Total</TableHead>
                   <TableHead>Status</TableHead>
+                  <TableHead>Action</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -396,11 +432,55 @@ export default function QuizManagementPage() {
                         <Badge variant="secondary">Auto-graded</Badge>
                       )}
                     </TableCell>
+                    <TableCell>
+                      <Button size="sm" onClick={() => openGradeDialog(s)}>
+                        <Edit className="w-4 h-4 mr-1" />
+                        {s.is_graded ? "Edit" : "Grade"}
+                      </Button>
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
             </Table>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Grade Quiz Dialog */}
+      <Dialog open={isGradeOpen} onOpenChange={setIsGradeOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Grade Quiz Submission</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <Label className="font-semibold">Student: {selectedSubmission?.student_name}</Label>
+            </div>
+            <div className="p-3 bg-muted rounded text-sm space-y-1">
+              <p><strong>Auto Marks (MCQ):</strong> {selectedSubmission?.auto_marks || 0}</p>
+              {selectedSubmission?.answers && (
+                <div className="mt-2">
+                  <strong>Answers:</strong>
+                  {selectedSubmission.answers.map((a: any, i: number) => (
+                    <p key={i} className="ml-2 text-xs">Q{a.question_id}: {a.answer}</p>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div>
+              <Label>Manual Marks (for text questions)</Label>
+              <Input 
+                type="number" 
+                value={gradeForm.manual_marks} 
+                onChange={e => setGradeForm({...gradeForm, manual_marks: e.target.value})}
+                placeholder="Enter marks for text questions"
+              />
+              <p className="text-xs text-muted-foreground mt-1">
+                Total = Auto ({selectedSubmission?.auto_marks || 0}) + Manual = {(selectedSubmission?.auto_marks || 0) + (parseFloat(gradeForm.manual_marks) || 0)}
+              </p>
+            </div>
+            <Button onClick={handleGradeQuiz} className="w-full">Save Grade</Button>
+          </div>
         </DialogContent>
       </Dialog>
     </div>

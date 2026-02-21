@@ -11,7 +11,7 @@ exports.getAllStudents = async (req, res) => {
     if (fields !== 'all') {
       // Basic fields for dropdown/listing
       selectClause = `s.id, s.student_name, s.admission_no, s.classname, 
-                      s.roll_no, s.uses_bus, s.admission_date`;
+                      s.roll_no, s.uses_bus, s.admission_date, s.created_at`;
     }
     
     // Join with bus_student_assignments to get bus info - include both active and removed assignments
@@ -49,6 +49,37 @@ exports.getAllStudents = async (req, res) => {
   }
 };
 
+// --- GET NEXT ADMISSION NUMBER ---
+exports.getNextAdmissionNo = async (req, res) => {
+  try {
+    const currentYear = new Date().getFullYear();
+    const prefix = `${currentYear}-`;
+    
+    // Find the highest admission_no for the current year
+    const [rows] = await db.execute(
+      `SELECT admission_no FROM students 
+       WHERE admission_no LIKE ? 
+       ORDER BY admission_no DESC LIMIT 1`,
+      [`${prefix}%`]
+    );
+    
+    let nextNumber = 1;
+    if (rows.length > 0) {
+      const lastNo = rows[0].admission_no; // e.g. "2026-005"
+      const lastNum = parseInt(lastNo.split('-')[1], 10);
+      if (!isNaN(lastNum)) {
+        nextNumber = lastNum + 1;
+      }
+    }
+    
+    const nextAdmissionNo = `${currentYear}-${String(nextNumber).padStart(3, '0')}`;
+    res.json({ admission_no: nextAdmissionNo });
+  } catch (err) {
+    console.error('Error generating admission number:', err);
+    res.status(500).json({ message: err.message });
+  }
+};
+
 // --- REGISTER STUDENT ---
 exports.registerStudent = async (req, res) => {
   const s = req.body;
@@ -65,8 +96,8 @@ exports.registerStudent = async (req, res) => {
         contact_no, gender, dob, age, email, registration_fees, image, uses_bus,
         pan_no, weight, height, aadhar_no, previous_school_name, 
         alternate_mobile_no, father_name, father_aadhar_no, mother_name, mother_aadhar_no,
-        password_hash
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        password_hash, admission_date
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
 
     const rawValues = [
@@ -74,7 +105,7 @@ exports.registerStudent = async (req, res) => {
       s.contact_no, s.gender, s.dob, s.age, s.email, s.registration_fees, s.image, s.usesBus,
       s.pan_no, s.weight, s.height, s.aadhar_no, s.previous_school_name,
       s.alternate_mobile_no, s.father_name, s.father_aadhar_no, s.mother_name, s.mother_aadhar_no,
-      passwordHash
+      passwordHash, s.admission_date || new Date().toISOString().split('T')[0]
     ];
 
     // FIX: Convert all 'undefined' values to 'null' to prevent MySQL errors

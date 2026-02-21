@@ -72,6 +72,7 @@ exports.login = async (req, res) => {
       response.student_name = user.student_name;
       response.classname = user.classname;
       response.roll_no = user.roll_no;
+      response.father_name = user.father_name;
     }
 
     // Add teacher-specific fields if user is a teacher

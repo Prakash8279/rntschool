@@ -17,7 +17,13 @@ export interface Student {
   email: string;
   registration_fees: string;
   image: string;
+  admission_date?: string;
+  created_at?: string;
   usesBus?: boolean;
+  bus_start_date?: string;
+  bus_end_date?: string;
+  contact?: string;
+  father_contact?: string;
   pan_no?: string;
   weight?: string;
   height?: string;

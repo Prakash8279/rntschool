@@ -1,7 +1,11 @@
 import { useState, useEffect } from "react";
 import { useDispatch, useSelector } from "react-redux";
 import { AppDispatch, RootState } from "@/store";
-import { fetchAssignmentsByClass, submitAssignment, fetchQuizzesByClass, fetchQuizForTaking, submitQuiz, clearCurrentQuiz } from "@/store/slices/assignmentSlice";
+import { 
+  fetchAssignmentsByClass, submitAssignment, 
+  fetchQuizzesByClass, fetchQuizForTaking, submitQuiz, clearCurrentQuiz,
+  fetchStudentSubmission, fetchStudentQuizSubmission
+} from "@/store/slices/assignmentSlice";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -10,13 +14,13 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
-import { FileText, HelpCircle, Clock, CheckCircle, Send, AlertCircle } from "lucide-react";
+import { FileText, HelpCircle, Clock, CheckCircle, Send, AlertCircle, Lock } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 
 export default function StudentAssignmentsPage() {
   const dispatch = useDispatch<AppDispatch>();
   const { userInfo: user } = useSelector((state: RootState) => state.auth);
-  const { assignments, quizzes, currentQuiz, loading } = useSelector((state: RootState) => state.assignment);
+  const { assignments, quizzes, currentQuiz, loading, error, myAssignmentSubmissions, myQuizSubmissions } = useSelector((state: RootState) => state.assignment);
 
   const [selectedAssignment, setSelectedAssignment] = useState<any>(null);
   const [submissionText, setSubmissionText] = useState("");
@@ -26,19 +30,44 @@ export default function StudentAssignmentsPage() {
   const [quizAnswers, setQuizAnswers] = useState<{[key: number]: string}>({});
   const [quizStarted, setQuizStarted] = useState<Date | null>(null);
 
-  // Get student's class from user data (you may need to fetch this)
-  const studentClass = (user as any)?.classname || "1st";
+  const studentClass = (user as any)?.classname || "";
+  const admissionNo = (user as any)?.admission_no || "";
 
   useEffect(() => {
     if (studentClass) {
       dispatch(fetchAssignmentsByClass(studentClass));
       dispatch(fetchQuizzesByClass(studentClass));
+    } else {
+      console.warn("Student classname is missing. User may need to re-login.");
     }
   }, [dispatch, studentClass]);
 
+  // Check submission status for each assignment and quiz once loaded
+  useEffect(() => {
+    if (admissionNo && assignments.length > 0) {
+      assignments.forEach((a: any) => {
+        if (!myAssignmentSubmissions[a._id]) {
+          dispatch(fetchStudentSubmission({ assignmentId: a._id, admissionNo }));
+        }
+      });
+    }
+  }, [dispatch, assignments, admissionNo]);
+
+  useEffect(() => {
+    if (admissionNo && quizzes.length > 0) {
+      quizzes.forEach((q: any) => {
+        if (!myQuizSubmissions[q._id]) {
+          dispatch(fetchStudentQuizSubmission({ quizId: q._id, admissionNo }));
+        }
+      });
+    }
+  }, [dispatch, quizzes, admissionNo]);
+
   const handleOpenAssignment = (assignment: any) => {
     setSelectedAssignment(assignment);
-    setSubmissionText("");
+    // Pre-fill with previous submission text if re-submitting
+    const prev = myAssignmentSubmissions[assignment._id];
+    setSubmissionText(prev?.submission_text || "");
     setIsSubmitOpen(true);
   };
 
@@ -48,22 +77,53 @@ export default function StudentAssignmentsPage() {
       return;
     }
 
-    await dispatch(submitAssignment({
+    const result = await dispatch(submitAssignment({
       assignment_id: selectedAssignment._id,
       student_id: user?._id,
-      admission_no: (user as any)?.admission_no,
+      admission_no: admissionNo,
       student_name: user?.name,
       classname: studentClass,
       submission_text: submissionText
     }));
 
-    toast({ title: "Submitted!", description: "Your assignment has been submitted" });
+    if (submitAssignment.fulfilled.match(result)) {
+      toast({ title: "Submitted!", description: "Your assignment has been submitted" });
+      // Refresh submission status
+      dispatch(fetchStudentSubmission({ assignmentId: selectedAssignment._id, admissionNo }));
+    } else {
+      toast({ title: "Error", description: "Failed to submit assignment", variant: "destructive" });
+    }
     setIsSubmitOpen(false);
     setSelectedAssignment(null);
     setSubmissionText("");
   };
 
+  const getQuizTimeStatus = (quiz: any): 'upcoming' | 'active' | 'expired' => {
+    const now = new Date();
+    if (quiz.start_time && new Date(quiz.start_time) > now) return 'upcoming';
+    if (quiz.end_time && new Date(quiz.end_time) < now) return 'expired';
+    return 'active';
+  };
+
   const handleStartQuiz = async (quiz: any) => {
+    // Check if already submitted
+    const existingSub = myQuizSubmissions[quiz._id];
+    if (existingSub) {
+      toast({ title: "Already Submitted", description: `You already submitted this quiz. Score: ${existingSub.total_marks || 0}/${quiz.total_marks}`, variant: "destructive" });
+      return;
+    }
+
+    // Check time window
+    const timeStatus = getQuizTimeStatus(quiz);
+    if (timeStatus === 'upcoming') {
+      toast({ title: "Not Started", description: `This quiz starts at ${new Date(quiz.start_time).toLocaleString()}`, variant: "destructive" });
+      return;
+    }
+    if (timeStatus === 'expired') {
+      toast({ title: "Expired", description: "This quiz time has ended", variant: "destructive" });
+      return;
+    }
+
     await dispatch(fetchQuizForTaking(quiz._id));
     setQuizAnswers({});
     setQuizStarted(new Date());
@@ -82,17 +142,23 @@ export default function StudentAssignmentsPage() {
       answer
     }));
 
-    await dispatch(submitQuiz({
+    const result = await dispatch(submitQuiz({
       quiz_id: currentQuiz._id,
       student_id: user?._id,
-      admission_no: (user as any)?.admission_no,
+      admission_no: admissionNo,
       student_name: user?.name,
       classname: studentClass,
       answers: answersArray,
       started_at: quizStarted?.toISOString()
     }));
 
-    toast({ title: "Quiz Submitted!", description: "Your quiz has been submitted successfully" });
+    if (submitQuiz.fulfilled.match(result)) {
+      toast({ title: "Quiz Submitted!", description: "Your quiz has been submitted successfully" });
+      // Refresh quiz submission status
+      dispatch(fetchStudentQuizSubmission({ quizId: currentQuiz._id, admissionNo }));
+    } else {
+      toast({ title: "Error", description: "Failed to submit quiz. You may have already submitted.", variant: "destructive" });
+    }
     setIsQuizOpen(false);
     dispatch(clearCurrentQuiz());
     setQuizAnswers({});
@@ -106,8 +172,26 @@ export default function StudentAssignmentsPage() {
     <div className="p-6 space-y-6">
       <div>
         <h1 className="text-2xl font-bold">My Assignments & Quizzes</h1>
-        <p className="text-muted-foreground">View and submit your assignments and quizzes</p>
+        <p className="text-muted-foreground">View and submit your assignments and quizzes — Class: {studentClass || "Unknown"}</p>
       </div>
+
+      {!studentClass && (
+        <Card className="border-yellow-400 bg-yellow-50">
+          <CardContent className="pt-6 text-center text-yellow-800">
+            <AlertCircle className="w-5 h-5 inline mr-2" />
+            Your class information is missing. Please <strong>logout and login again</strong> to load your assignments and quizzes.
+          </CardContent>
+        </Card>
+      )}
+
+      {error && (
+        <Card className="border-red-400 bg-red-50">
+          <CardContent className="pt-6 text-center text-red-800">
+            <AlertCircle className="w-5 h-5 inline mr-2" />
+            Failed to load data: {error}
+          </CardContent>
+        </Card>
+      )}
 
       <Tabs defaultValue="assignments">
         <TabsList>
@@ -131,32 +215,46 @@ export default function StudentAssignmentsPage() {
             </Card>
           ) : (
             <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {assignments.map((a: any) => (
-                <Card key={a._id} className="hover:shadow-lg transition-shadow">
-                  <CardHeader>
-                    <div className="flex justify-between items-start">
-                      <CardTitle className="text-lg">{a.title}</CardTitle>
-                      {a.due_date && (
-                        isOverdue(a.due_date) ? (
-                          <Badge variant="destructive"><AlertCircle className="w-3 h-3 mr-1" /> Overdue</Badge>
-                        ) : (
-                          <Badge><Clock className="w-3 h-3 mr-1" /> Due: {a.due_date}</Badge>
-                        )
+              {assignments.map((a: any) => {
+                const mySub = myAssignmentSubmissions[a._id];
+                return (
+                  <Card key={a._id} className={`hover:shadow-lg transition-shadow ${mySub ? 'border-green-300' : ''}`}>
+                    <CardHeader>
+                      <div className="flex justify-between items-start">
+                        <CardTitle className="text-lg">{a.title}</CardTitle>
+                        {mySub ? (
+                          mySub.is_graded ? (
+                            <Badge className="bg-green-500"><CheckCircle className="w-3 h-3 mr-1" /> {mySub.marks_obtained}/{a.max_marks}</Badge>
+                          ) : (
+                            <Badge className="bg-blue-500"><CheckCircle className="w-3 h-3 mr-1" /> Submitted</Badge>
+                          )
+                        ) : a.due_date ? (
+                          isOverdue(a.due_date) ? (
+                            <Badge variant="destructive"><AlertCircle className="w-3 h-3 mr-1" /> Overdue</Badge>
+                          ) : (
+                            <Badge><Clock className="w-3 h-3 mr-1" /> Due: {a.due_date}</Badge>
+                          )
+                        ) : null}
+                      </div>
+                      <CardDescription>{a.subject} | {a.teacher_name}</CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      <p className="text-sm text-muted-foreground mb-4">{a.description || "No description"}</p>
+                      {mySub?.is_graded && mySub.remarks && (
+                        <p className="text-xs text-green-700 bg-green-50 p-2 rounded mb-3">
+                          <strong>Feedback:</strong> {mySub.remarks}
+                        </p>
                       )}
-                    </div>
-                    <CardDescription>{a.subject} | {a.teacher_name}</CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    <p className="text-sm text-muted-foreground mb-4">{a.description || "No description"}</p>
-                    <div className="flex justify-between items-center">
-                      <span className="text-sm font-medium">Max Marks: {a.max_marks}</span>
-                      <Button size="sm" onClick={() => handleOpenAssignment(a)}>
-                        <Send className="w-4 h-4 mr-2" /> Submit
-                      </Button>
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
+                      <div className="flex justify-between items-center">
+                        <span className="text-sm font-medium">Max Marks: {a.max_marks}</span>
+                        <Button size="sm" onClick={() => handleOpenAssignment(a)}>
+                          <Send className="w-4 h-4 mr-2" /> {mySub ? "Resubmit" : "Submit"}
+                        </Button>
+                      </div>
+                    </CardContent>
+                  </Card>
+                );
+              })}
             </div>
           )}
         </TabsContent>
@@ -173,26 +271,52 @@ export default function StudentAssignmentsPage() {
             </Card>
           ) : (
             <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {quizzes.map((q: any) => (
-                <Card key={q._id} className="hover:shadow-lg transition-shadow">
-                  <CardHeader>
-                    <div className="flex justify-between items-start">
-                      <CardTitle className="text-lg">{q.title}</CardTitle>
-                      <Badge><Clock className="w-3 h-3 mr-1" /> {q.duration_minutes} mins</Badge>
-                    </div>
-                    <CardDescription>{q.subject} | {q.teacher_name}</CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    <p className="text-sm text-muted-foreground mb-4">{q.description || "No description"}</p>
-                    <div className="flex justify-between items-center">
-                      <span className="text-sm font-medium">Total Marks: {q.total_marks}</span>
-                      <Button size="sm" onClick={() => handleStartQuiz(q)}>
-                        <HelpCircle className="w-4 h-4 mr-2" /> Start Quiz
-                      </Button>
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
+              {quizzes.map((q: any) => {
+                const mySub = myQuizSubmissions[q._id];
+                const timeStatus = getQuizTimeStatus(q);
+                return (
+                  <Card key={q._id} className={`hover:shadow-lg transition-shadow ${mySub ? 'border-green-300' : timeStatus === 'expired' ? 'border-red-200 opacity-75' : ''}`}>
+                    <CardHeader>
+                      <div className="flex justify-between items-start">
+                        <CardTitle className="text-lg">{q.title}</CardTitle>
+                        {mySub ? (
+                          <Badge className="bg-green-500"><CheckCircle className="w-3 h-3 mr-1" /> {mySub.total_marks || 0}/{q.total_marks}</Badge>
+                        ) : timeStatus === 'expired' ? (
+                          <Badge variant="destructive"><Lock className="w-3 h-3 mr-1" /> Expired</Badge>
+                        ) : timeStatus === 'upcoming' ? (
+                          <Badge variant="secondary"><Clock className="w-3 h-3 mr-1" /> Upcoming</Badge>
+                        ) : (
+                          <Badge><Clock className="w-3 h-3 mr-1" /> {q.duration_minutes} mins</Badge>
+                        )}
+                      </div>
+                      <CardDescription>{q.subject} | {q.teacher_name}</CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      <p className="text-sm text-muted-foreground mb-2">{q.description || "No description"}</p>
+                      {q.start_time && (
+                        <p className="text-xs text-muted-foreground mb-1">
+                          Start: {new Date(q.start_time).toLocaleString()}
+                        </p>
+                      )}
+                      {q.end_time && (
+                        <p className="text-xs text-muted-foreground mb-3">
+                          End: {new Date(q.end_time).toLocaleString()}
+                        </p>
+                      )}
+                      <div className="flex justify-between items-center">
+                        <span className="text-sm font-medium">Total Marks: {q.total_marks}</span>
+                        {mySub ? (
+                          <Badge variant="outline" className="text-green-600">Completed</Badge>
+                        ) : (
+                          <Button size="sm" onClick={() => handleStartQuiz(q)} disabled={timeStatus !== 'active'}>
+                            <HelpCircle className="w-4 h-4 mr-2" /> Start Quiz
+                          </Button>
+                        )}
+                      </div>
+                    </CardContent>
+                  </Card>
+                );
+              })}
             </div>
           )}
         </TabsContent>
@@ -217,6 +341,12 @@ export default function StudentAssignmentsPage() {
                 <p className="text-sm p-2 bg-muted rounded">{selectedAssignment.description}</p>
               </div>
             )}
+            {myAssignmentSubmissions[selectedAssignment?._id] && (
+              <div className="p-3 bg-blue-50 rounded text-sm border border-blue-200">
+                <p className="font-medium text-blue-700">You have already submitted this assignment.</p>
+                <p className="text-blue-600">Submitting again will update your previous answer.</p>
+              </div>
+            )}
             <div>
               <Label>Your Answer *</Label>
               <Textarea 
@@ -227,7 +357,8 @@ export default function StudentAssignmentsPage() {
               />
             </div>
             <Button onClick={handleSubmitAssignment} className="w-full">
-              <CheckCircle className="w-4 h-4 mr-2" /> Submit Assignment
+              <CheckCircle className="w-4 h-4 mr-2" /> 
+              {myAssignmentSubmissions[selectedAssignment?._id] ? "Update Submission" : "Submit Assignment"}
             </Button>
           </div>
         </DialogContent>

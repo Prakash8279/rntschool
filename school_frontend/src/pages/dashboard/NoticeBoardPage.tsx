@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useDispatch, useSelector } from "react-redux";
 import { AppDispatch, RootState } from "@/store";
-import { addNotice, deleteNotice, Notice } from "@/store/slices/noticeSlice";
+import { fetchNotices, addNotice, deleteNotice, Notice } from "@/store/slices/noticeSlice";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -35,14 +35,17 @@ import {
 
 const NoticeBoardPage = () => {
   const dispatch = useDispatch<AppDispatch>();
-  const { notices } = useSelector((state: RootState) => state.notice);
+  const { notices, loading } = useSelector((state: RootState) => state.notice);
   const { userInfo } = useSelector((state: RootState) => state.auth);
   
   // Current User Details
   const role = userInfo?.role || "student";
-  // Assuming userInfo has a 'classname' property if they are a student
-  // You might need to adjust this based on your actual auth structure
-  const userClass = (userInfo as any)?.classname || ""; 
+  const userClass = (userInfo as any)?.classname || "";
+
+  // Fetch notices on mount
+  useEffect(() => {
+    dispatch(fetchNotices());
+  }, [dispatch]); 
 
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   
@@ -61,17 +64,17 @@ const NoticeBoardPage = () => {
       return;
     }
 
-    const newNotice: Notice = {
-      id: Date.now().toString(),
+    const newNotice = {
       title,
       content,
-      date: new Date().toISOString(),
       targetAudience,
       postedBy: userInfo?.name || "Admin",
       isImportant,
     };
 
-    dispatch(addNotice(newNotice));
+    dispatch(addNotice(newNotice)).then(() => {
+      dispatch(fetchNotices()); // Refetch to get the server-generated data
+    });
     toast.success("Notice published successfully!");
     
     // Reset and close
@@ -84,7 +87,9 @@ const NoticeBoardPage = () => {
 
   const handleDelete = (id: string) => {
     if (confirm("Are you sure you want to delete this notice?")) {
-      dispatch(deleteNotice(id));
+      dispatch(deleteNotice(id)).then(() => {
+        dispatch(fetchNotices()); // Refetch after delete
+      });
       toast.success("Notice deleted.");
     }
   };
@@ -190,6 +195,14 @@ const NoticeBoardPage = () => {
       </div>
 
       {/* Notices Grid */}
+      {loading ? (
+        <div className="col-span-full text-center py-20 bg-gray-50 rounded-lg border border-dashed">
+          <div className="flex justify-center mb-4">
+            <Megaphone className="h-10 w-10 text-gray-400 animate-pulse" />
+          </div>
+          <h3 className="text-lg font-medium text-gray-900">Loading notices...</h3>
+        </div>
+      ) : (
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {filteredNotices.length > 0 ? (
           filteredNotices.map((notice) => (
@@ -251,6 +264,7 @@ const NoticeBoardPage = () => {
           </div>
         )}
       </div>
+      )}
     </div>
   );
 };

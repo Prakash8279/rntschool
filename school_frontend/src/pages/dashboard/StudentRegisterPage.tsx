@@ -105,6 +105,24 @@ const StudentRegisterPage = () => {
     },
   });
 
+  // --- AUTO FETCH NEXT ADMISSION NO ---
+  const fetchNextAdmissionNo = async () => {
+    try {
+      const userCred = localStorage.getItem('userCred');
+      const token = userCred ? JSON.parse(userCred).token : null;
+      const { data } = await axios.get(`${API_URL}/students/next-admission-no`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      form.setValue('admission_no', data.admission_no);
+    } catch (err) {
+      console.error('Failed to fetch next admission no:', err);
+    }
+  };
+
+  useEffect(() => {
+    fetchNextAdmissionNo();
+  }, []);
+
   // --- AUTO CALCULATE AGE ---
   const dob = form.watch("dob");
   useEffect(() => {
@@ -127,6 +145,8 @@ const StudentRegisterPage = () => {
       setShowPdfDownload(true);
       // We don't reset immediately so user can download PDF
       dispatch(resetStudentState());
+      // Fetch next admission number for the next registration
+      fetchNextAdmissionNo();
     }
     if (error) {
       toast.error(error);
@@ -477,7 +497,7 @@ const StudentRegisterPage = () => {
                       <FormItem>
                         <FormLabel>Admission No / Reg ID</FormLabel>
                         <FormControl>
-                          <Input placeholder="e.g. 2024-001" {...field} />
+                          <Input placeholder="e.g. 2026-001" {...field} readOnly className="bg-gray-100 cursor-not-allowed" />
                         </FormControl>
                         <FormMessage />
                       </FormItem>

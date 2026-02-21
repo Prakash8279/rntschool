@@ -1,9 +1,10 @@
 const express = require('express');
 const router = express.Router();
 // Import updateStudent here
-const { getAllStudents, registerStudent, deleteStudent, updateStudent } = require('../controllers/studentController');
+const { getAllStudents, registerStudent, deleteStudent, updateStudent, getNextAdmissionNo } = require('../controllers/studentController');
 const { protect, adminOnly } = require('../middleware/authMiddleware');
 
+router.get('/next-admission-no', protect, getNextAdmissionNo);
 router.get('/', protect, getAllStudents); 
 router.post('/', protect, adminOnly, registerStudent);
 

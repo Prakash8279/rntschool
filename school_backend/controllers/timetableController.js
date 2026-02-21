@@ -6,7 +6,7 @@ exports.getTimetable = async (req, res) => {
     const schedule = rows.map(t => ({
       ...t,
       _id: t.id.toString(),
-      teacherId: t.teacher_id,     // Map DB snake_case to frontend camelCase
+      teacherId: t.teacher_id?.toString(),     // Map DB snake_case to frontend camelCase (must be string to match userInfo._id)
       teacherName: t.teacher_name,
       startTime: t.start_time,
       endTime: t.end_time

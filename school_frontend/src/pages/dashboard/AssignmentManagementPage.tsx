@@ -25,6 +25,8 @@ export default function AssignmentManagementPage() {
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [isViewOpen, setIsViewOpen] = useState(false);
   const [isGradeOpen, setIsGradeOpen] = useState(false);
+  const [isEditMode, setIsEditMode] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [selectedAssignment, setSelectedAssignment] = useState<any>(null);
   const [selectedSubmission, setSelectedSubmission] = useState<any>(null);
   const [filterClass, setFilterClass] = useState<string>("");
@@ -69,6 +71,42 @@ export default function AssignmentManagementPage() {
 
     toast({ title: "Success", description: "Assignment created successfully" });
     setIsCreateOpen(false);
+    setForm({ title: "", description: "", classname: "", subject: "", due_date: "", max_marks: "100" });
+  };
+
+  const handleEdit = (assignment: any) => {
+    setIsEditMode(true);
+    setEditingId(assignment._id);
+    setForm({
+      title: assignment.title || "",
+      description: assignment.description || "",
+      classname: assignment.classname || "",
+      subject: assignment.subject || "",
+      due_date: assignment.due_date || "",
+      max_marks: String(assignment.max_marks || 100)
+    });
+    setIsCreateOpen(true);
+  };
+
+  const handleUpdate = async () => {
+    if (!editingId || !form.title || !form.classname || !form.subject) {
+      toast({ title: "Error", description: "Please fill required fields", variant: "destructive" });
+      return;
+    }
+
+    await dispatch(updateAssignment({
+      id: editingId,
+      data: {
+        ...form,
+        max_marks: parseFloat(form.max_marks) || 100,
+        is_active: true
+      }
+    }));
+
+    toast({ title: "Updated", description: "Assignment updated successfully" });
+    setIsCreateOpen(false);
+    setIsEditMode(false);
+    setEditingId(null);
     setForm({ title: "", description: "", classname: "", subject: "", due_date: "", max_marks: "100" });
   };
 
@@ -123,13 +161,20 @@ export default function AssignmentManagementPage() {
           <h1 className="text-2xl font-bold">Assignment Management</h1>
           <p className="text-muted-foreground">Create and manage assignments for students</p>
         </div>
-        <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
+        <Dialog open={isCreateOpen} onOpenChange={(open) => {
+          setIsCreateOpen(open);
+          if (!open) {
+            setIsEditMode(false);
+            setEditingId(null);
+            setForm({ title: "", description: "", classname: "", subject: "", due_date: "", max_marks: "100" });
+          }
+        }}>
           <DialogTrigger asChild>
             <Button><Plus className="w-4 h-4 mr-2" /> Create Assignment</Button>
           </DialogTrigger>
           <DialogContent className="max-w-lg">
             <DialogHeader>
-              <DialogTitle>Create New Assignment</DialogTitle>
+              <DialogTitle>{isEditMode ? "Edit Assignment" : "Create New Assignment"}</DialogTitle>
             </DialogHeader>
             <div className="space-y-4">
               <div>
@@ -170,7 +215,9 @@ export default function AssignmentManagementPage() {
                   <Input type="number" value={form.max_marks} onChange={e => setForm({...form, max_marks: e.target.value})} />
                 </div>
               </div>
-              <Button onClick={handleCreate} className="w-full">Create Assignment</Button>
+              <Button onClick={isEditMode ? handleUpdate : handleCreate} className="w-full">
+                {isEditMode ? "Update Assignment" : "Create Assignment"}
+              </Button>
             </div>
           </DialogContent>
         </Dialog>
@@ -236,6 +283,9 @@ export default function AssignmentManagementPage() {
                       <div className="flex gap-2">
                         <Button size="sm" variant="outline" onClick={() => handleViewSubmissions(a)}>
                           <Eye className="w-4 h-4" />
+                        </Button>
+                        <Button size="sm" variant="outline" onClick={() => handleEdit(a)}>
+                          <Edit className="w-4 h-4" />
                         </Button>
                         <Button size="sm" variant="outline" onClick={() => handleDelete(a._id)}>
                           <Trash2 className="w-4 h-4 text-red-500" />

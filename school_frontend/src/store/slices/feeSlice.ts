@@ -34,6 +34,8 @@ export interface FeeRecord {
   academic_year?: string;
   paid_amount?: number;
   due_amount?: number;
+  transactionId?: string;
+  collectedBy?: string;
 }
 
 export interface FeeAnalytics {
@@ -74,10 +76,20 @@ export interface Defaulter {
   lastPaymentDate: string | null;
 }
 
+interface PaginationMeta {
+  total: number;
+  limit: number;
+  offset: number;
+  currentPage: number;
+  totalPages: number;
+  hasMore: boolean;
+}
+
 interface FeeState {
   history: FeeRecord[];
   analytics: FeeAnalytics | null;
   defaulters: Defaulter[];
+  pagination: PaginationMeta | null;
   loading: boolean;
   success: boolean;
   error: string | null;
@@ -87,6 +99,7 @@ const initialState: FeeState = {
   history: [],
   analytics: null,
   defaulters: [],
+  pagination: null,
   loading: false,
   success: false,
   error: null,
@@ -108,16 +121,34 @@ export const payFees = createAsyncThunk(
 
 export const getFeeHistory = createAsyncThunk(
   "fees/history",
-  async (filters?: { academic_year?: string; classname?: string; month?: string; payment_mode?: string }, { rejectWithValue }) => {
+  async (filters: { 
+    academic_year?: string; 
+    classname?: string; 
+    month?: string; 
+    payment_mode?: string;
+    limit?: number;
+    offset?: number;
+    student_id?: string;
+  } = {}, { rejectWithValue }) => {
     try {
       const params = new URLSearchParams();
       if (filters?.academic_year) params.append('academic_year', filters.academic_year);
       if (filters?.classname) params.append('classname', filters.classname);
       if (filters?.month) params.append('month', filters.month);
       if (filters?.payment_mode) params.append('payment_mode', filters.payment_mode);
+      if (filters?.limit) params.append('limit', filters.limit.toString());
+      if (filters?.offset) params.append('offset', filters.offset.toString());
+      if (filters?.student_id) params.append('student_id', filters.student_id);
       
       const { data } = await axios.get(`${API_URL}${params.toString() ? '?' + params.toString() : ''}`);
-      return data;
+      
+      // Handle both paginated and non-paginated responses
+      if (data && typeof data === 'object' && 'data' in data && 'pagination' in data) {
+        return data; // Paginated response
+      }
+      
+      // Legacy format (array)
+      return { data: data as FeeRecord[], pagination: null };
     } catch (error: any) {
       return rejectWithValue(error.response?.data?.message || "Failed to load history");
     }
@@ -126,7 +157,7 @@ export const getFeeHistory = createAsyncThunk(
 
 export const getFeeAnalytics = createAsyncThunk(
   "fees/analytics",
-  async (academicYear?: string, { rejectWithValue }) => {
+  async (academicYear: string | undefined = undefined, { rejectWithValue }) => {
     try {
       const { data } = await axios.get(`${API_URL}/analytics${academicYear ? `?academic_year=${academicYear}` : ''}`);
       return data;
@@ -138,7 +169,7 @@ export const getFeeAnalytics = createAsyncThunk(
 
 export const getDefaultersList = createAsyncThunk(
   "fees/defaulters",
-  async (filters?: { classname?: string; min_pending?: number }, { rejectWithValue }) => {
+  async (filters: { classname?: string; min_pending?: number } = {}, { rejectWithValue }) => {
     try {
       const params = new URLSearchParams();
       if (filters?.classname) params.append('classname', filters.classname);
@@ -189,7 +220,15 @@ const feeSlice = createSlice({
       .addCase(getFeeHistory.pending, (state) => { state.loading = true; })
       .addCase(getFeeHistory.fulfilled, (state, action) => {
         state.loading = false;
-        state.history = action.payload;
+        // Handle paginated response
+        if (action.payload && typeof action.payload === 'object' && 'data' in action.payload) {
+          state.history = action.payload.data;
+          state.pagination = action.payload.pagination;
+        } else {
+          // Legacy array format
+          state.history = action.payload as any;
+          state.pagination = null;
+        }
       })
       .addCase(getFeeHistory.rejected, (state, action) => {
         state.loading = false;
