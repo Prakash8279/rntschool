@@ -45,10 +45,10 @@ exports.login = async (req, res) => {
     let isMatch = false;
 
     if (user.password_hash) {
-       isMatch = await bcrypt.compare(password, user.password_hash);
+      isMatch = await bcrypt.compare(password, user.password_hash);
     } else {
-       // Allow default login if no custom password set yet
-       isMatch = isDefaultPass;
+      // Allow default login if no custom password set yet
+      isMatch = isDefaultPass;
     }
 
     if (!isMatch) return res.status(401).json({ message: 'Invalid credentials' });
@@ -94,10 +94,63 @@ exports.registerAdmin = async (req, res) => {
   const { name, email, password, role } = req.body;
   const hash = await bcrypt.hash(password, 10);
   try {
-    await db.execute('INSERT INTO users (name, email, password_hash, role) VALUES (?, ?, ?, ?)', 
-    [name, email, hash, role]);
+    await db.execute('INSERT INTO users (name, email, password_hash, role) VALUES (?, ?, ?, ?)',
+      [name, email, hash, role]);
     res.json({ message: 'Admin registered' });
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+};
+
+// Self password change - old password verify karke naya set karo
+exports.changeOwnPassword = async (req, res) => {
+  const { oldPassword, newPassword } = req.body;
+  const { id, role } = req.user; // from JWT middleware
+
+  if (!oldPassword || !newPassword) {
+    return res.status(400).json({ message: 'Old aur new password required hain' });
+  }
+  if (newPassword.length < 6) {
+    return res.status(400).json({ message: 'New password kam se kam 6 characters ka hona chahiye' });
+  }
+
+  try {
+    let user = null;
+    let table = '';
+
+    if (role === 'student') {
+      const [rows] = await db.execute('SELECT * FROM students WHERE id = ?', [id]);
+      user = rows[0]; table = 'students';
+    } else if (role === 'teacher') {
+      const [rows] = await db.execute('SELECT * FROM teachers WHERE id = ?', [id]);
+      user = rows[0]; table = 'teachers';
+    } else {
+      // admin / finance / studentManager
+      const [rows] = await db.execute('SELECT * FROM users WHERE id = ?', [id]);
+      user = rows[0]; table = 'users';
+    }
+
+    if (!user) return res.status(404).json({ message: 'User not found' });
+
+    // Old password verify
+    let isMatch = false;
+    if (user.password_hash) {
+      isMatch = await bcrypt.compare(oldPassword, user.password_hash);
+    } else {
+      // Default password for users who never changed it
+      isMatch = oldPassword === '123456';
+    }
+
+    if (!isMatch) {
+      return res.status(401).json({ message: 'Purana password galat hai' });
+    }
+
+    const newHash = await bcrypt.hash(newPassword, 10);
+    await db.execute(`UPDATE ${table} SET password_hash = ? WHERE id = ?`, [newHash, id]);
+
+    res.json({ message: 'Password successfully change ho gaya!' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Server error' });
   }
 };

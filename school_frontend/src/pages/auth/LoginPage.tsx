@@ -22,19 +22,19 @@ const FloatingShapes = () => {
           <meshStandardMaterial color="#A855F7" />
         </Box>
       </Float>
-      
+
       <Float speed={1.5} rotationIntensity={1.5} floatIntensity={1.5}>
         <Sphere args={[0.6, 32, 32]} position={[2, 1, -1]}>
           <meshStandardMaterial color="#EC4899" />
         </Sphere>
       </Float>
-      
+
       <Float speed={1.8} rotationIntensity={0.8} floatIntensity={2.5}>
         <Torus args={[0.5, 0.2, 16, 100]} position={[0, -1, -2]}>
           <meshStandardMaterial color="#14B8A6" />
         </Torus>
       </Float>
-      
+
       <Float speed={2.2} rotationIntensity={1.2} floatIntensity={2}>
         <Box args={[0.7, 0.7, 0.7]} position={[3, -0.5, 0]} rotation={[0.5, 0.5, 0]}>
           <meshStandardMaterial color="#F59E0B" />
@@ -52,11 +52,11 @@ const FloatingShapes = () => {
 const LoginPage = () => {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  
+
   const dispatch = useDispatch<AppDispatch>();
   const navigate = useNavigate();
   const location = useLocation();
-  
+
   const { loading, error, userInfo } = useSelector((state: RootState) => state.auth);
 
   // Redirect if already logged in
@@ -86,13 +86,13 @@ const LoginPage = () => {
           <OrbitControls enableZoom={false} autoRotate autoRotateSpeed={1} />
         </Canvas>
       </div>
-      
+
       {/* Decorative blurred circles */}
       <div className="fixed top-20 left-10 w-32 h-32 bg-secondary/20 rounded-full blur-3xl animate-pulse-color pointer-events-none" />
       <div className="fixed top-40 right-20 w-40 h-40 bg-primary/20 rounded-full blur-3xl animate-pulse-color pointer-events-none" style={{ animationDelay: "1s" }} />
       <div className="fixed bottom-32 left-1/4 w-24 h-24 bg-tertiary/20 rounded-full blur-2xl animate-pulse-color pointer-events-none" style={{ animationDelay: "2s" }} />
       <div className="fixed bottom-20 right-1/3 w-36 h-36 bg-quaternary/20 rounded-full blur-3xl animate-pulse-color pointer-events-none" style={{ animationDelay: "1.5s" }} />
-      
+
       <TopHeader />
       <Navbar />
       <div className="relative z-10 flex items-center justify-center min-h-screen pt-40 pb-12">
@@ -135,11 +135,7 @@ const LoginPage = () => {
                 {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
                 Sign In
               </Button>
-              <div className="text-xs text-gray-500 text-center mt-4 p-4 bg-gray-50 rounded-lg border border-gray-100">
-                <p className="font-semibold text-gray-600 mb-1">Default Credentials:</p>
-                <p>Admin: admin@school.com / admin123</p>
-                <p>Student/Teacher: Use registered email / set password</p>
-              </div>
+
             </form>
           </CardContent>
         </Card>

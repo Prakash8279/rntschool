@@ -58,11 +58,11 @@ const calculateLateFee = (dueDate, paymentDate, monthlyFee, lateFeeConfig) => {
 // --- GET FEE HISTORY ---
 exports.getFeeHistory = async (req, res) => {
   try {
-    const { 
-      academic_year, 
-      classname, 
-      month, 
-      payment_mode, 
+    const {
+      academic_year,
+      classname,
+      month,
+      payment_mode,
       limit = '1000',  // Default limit for performance
       offset = '0',     // Support pagination
       student_id       // Filter by specific student
@@ -137,7 +137,7 @@ exports.getFeeHistory = async (req, res) => {
     }
 
     query += " ORDER BY payment_date DESC";
-    
+
     // Apply pagination
     const safeLimit = Math.min(parseInt(limit), 5000); // Max 5000 records per request
     const safeOffset = Math.max(0, parseInt(offset));
@@ -199,7 +199,7 @@ exports.getFeeHistory = async (req, res) => {
 
 // --- COLLECT FEE (SAVE PAYMENT) ---
 exports.collectFee = async (req, res) => {
-  
+
   try {
     const {
       admissionNo,
@@ -271,15 +271,15 @@ exports.collectFee = async (req, res) => {
 
     // Check dress fee
     if (dress_fee > 0 && checks.dress_paid > 0) {
-      return res.status(400).json({ 
-        message: "Dress fee already collected for this student" 
+      return res.status(400).json({
+        message: "Dress fee already collected for this student"
       });
     }
 
     // Check book fee
     if (book_fee > 0 && checks.book_paid > 0) {
-      return res.status(400).json({ 
-        message: "Book fee already collected for this student" 
+      return res.status(400).json({
+        message: "Book fee already collected for this student"
       });
     }
 
@@ -635,16 +635,16 @@ exports.getFeeAnalytics = async (req, res) => {
       })),
       feeTypes: feeTypes[0]
         ? {
-            monthly: Number(feeTypes[0].monthly || 0),
-            bus: Number(feeTypes[0].bus || 0),
-            exam: Number(feeTypes[0].exam || 0),
-            admission: Number(feeTypes[0].admission || 0),
-            dress: Number(feeTypes[0].dress || 0),
-            book: Number(feeTypes[0].book || 0),
-            other: Number(feeTypes[0].other || 0),
-            fine: Number(feeTypes[0].fine || 0),
-            totalDiscount: Number(feeTypes[0].discount || 0),
-          }
+          monthly: Number(feeTypes[0].monthly || 0),
+          bus: Number(feeTypes[0].bus || 0),
+          exam: Number(feeTypes[0].exam || 0),
+          admission: Number(feeTypes[0].admission || 0),
+          dress: Number(feeTypes[0].dress || 0),
+          book: Number(feeTypes[0].book || 0),
+          other: Number(feeTypes[0].other || 0),
+          fine: Number(feeTypes[0].fine || 0),
+          totalDiscount: Number(feeTypes[0].discount || 0),
+        }
         : {},
     });
   } catch (err) {
@@ -672,7 +672,7 @@ exports.getDefaultersList = async (req, res) => {
     const [students] = await db.execute(studentQuery, params);
 
     // Get fee structure (only required fields)
-    const [feeStructures] = await db.execute("SELECT classname, monthly_fee, bus_fee, exam_fee, annual_fee, dress_fee, book_fee FROM fee_structure");
+    const [feeStructures] = await db.execute("SELECT classname, monthly_fee, bus_fee, exam_fee, annual_fee, dress_fee, book_fee, admission_fee FROM fee_structure");
     const structureMap = {};
     feeStructures.forEach((f) => {
       structureMap[f.classname] = f;
@@ -681,7 +681,7 @@ exports.getDefaultersList = async (req, res) => {
     // Get payments only for these students (optimized with IN clause)
     const admissionNos = students.map(s => s.admission_no);
     let allPayments = [];
-    
+
     if (admissionNos.length > 0) {
       const placeholders = admissionNos.map(() => '?').join(',');
       const [payments] = await db.execute(
@@ -732,11 +732,12 @@ exports.getDefaultersList = async (req, res) => {
       const busPending = Math.max(0, expectedBus - busPaid);
 
       // One-time fees
+      const admissionRate = Number(structure.admission_fee || structure.annual_fee || 0);
       const admissionPending = studentPayments.some(
         (p) => Number(p.annual_fee) > 0,
       )
         ? 0
-        : structure.annual_fee || 0;
+        : admissionRate;
       const examPending = studentPayments.some((p) => Number(p.exam_fees) > 0)
         ? 0
         : structure.exam_fee || 0;
@@ -819,13 +820,13 @@ exports.getAllFeeDues = async (req, res) => {
   try {
     const sql = `SELECT admission_no, due_amount FROM fee_dues WHERE due_amount != 0`;
     const [rows] = await db.execute(sql);
-    
+
     // Return as object map for easy lookup
     const duesMap = {};
     rows.forEach(row => {
       duesMap[row.admission_no] = Number(row.due_amount || 0);
     });
-    
+
     return res.json(duesMap);
   } catch (error) {
     console.error("Error fetching all fee dues:", error);
@@ -837,7 +838,7 @@ exports.getAllFeeDues = async (req, res) => {
 // Student Fee Due By Admission No
 
 exports.getFeeDueByAdmissionNo = async (req, res) => {
-  
+
   try {
     const { admissionNo } = req.params;
 
@@ -883,12 +884,12 @@ exports.getAllStudentAdvances = async (req, res) => {
     `;
 
     const [rows] = await db.execute(sql);
-    
+
     const advancesMap = {};
     rows.forEach(row => {
       advancesMap[row.admission_no] = Number(row.advance_amount || 0);
     });
-    
+
     return res.json(advancesMap);
   } catch (error) {
     console.error("Error fetching all student advances:", error);

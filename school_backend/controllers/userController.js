@@ -35,3 +35,30 @@ exports.deleteUser = async (req, res) => {
     res.status(500).json({ message: err.message });
   }
 };
+
+// Admin: Change password of any user without old password
+exports.changePasswordByAdmin = async (req, res) => {
+  const { userType, userId, newPassword } = req.body;
+  if (!userType || !userId || !newPassword) {
+    return res.status(400).json({ message: 'userType, userId aur newPassword required hain' });
+  }
+  try {
+    const hash = await bcrypt.hash(newPassword, 10);
+    let result;
+    if (userType === 'admin') {
+      [result] = await db.execute('UPDATE users SET password_hash = ? WHERE id = ?', [hash, userId]);
+    } else if (userType === 'teacher') {
+      [result] = await db.execute('UPDATE teachers SET password_hash = ? WHERE id = ?', [hash, userId]);
+    } else if (userType === 'student') {
+      [result] = await db.execute('UPDATE students SET password_hash = ? WHERE id = ?', [hash, userId]);
+    } else {
+      return res.status(400).json({ message: 'Invalid userType' });
+    }
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+    res.json({ message: 'Password successfully changed' });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};

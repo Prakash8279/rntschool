@@ -3,16 +3,16 @@ import { Outlet, useNavigate } from "react-router-dom";
 import { useDispatch, useSelector } from "react-redux";
 import { logout } from "@/store/slices/authSlice";
 import { RootState } from "@/store";
-import { 
-  Home, Users, GraduationCap, DollarSign, LogOut, Printer, 
-  BookOpen, UserCog, CalendarClock, CheckSquare, FileText, TrendingDown, 
-  Banknote, User, Globe, Megaphone, Bus, ClipboardList, HelpCircle 
+import {
+  Home, Users, GraduationCap, DollarSign, LogOut, Printer,
+  BookOpen, UserCog, CalendarClock, CheckSquare, FileText, TrendingDown,
+  Banknote, User, Globe, Megaphone, Bus, ClipboardList, HelpCircle, Settings, KeyRound
 } from "lucide-react";
 
 export default function DashboardLayout() {
   const dispatch = useDispatch();
   const navigate = useNavigate();
-  
+
   const { userInfo } = useSelector((state: RootState) => state.auth);
   const role = userInfo?.role || 'student';
 
@@ -33,7 +33,7 @@ export default function DashboardLayout() {
           </SidebarHeader>
           <SidebarContent>
             <SidebarMenu className="p-2 space-y-1">
-              
+
               {/* === COMMON LINKS === */}
               <SidebarMenuItem>
                 <SidebarMenuButton onClick={() => navigate("/dashboard")} tooltip="Dashboard">
@@ -87,6 +87,18 @@ export default function DashboardLayout() {
                     <SidebarMenuButton onClick={() => navigate("/dashboard/landing-page-edit")} tooltip="Edit Landing Page">
                       <Globe className="w-5 h-5" />
                       <span>Landing Page</span>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                  <SidebarMenuItem>
+                    <SidebarMenuButton onClick={() => navigate("/dashboard/settings")} tooltip="Settings">
+                      <Settings className="w-5 h-5" />
+                      <span>Settings</span>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                  <SidebarMenuItem>
+                    <SidebarMenuButton onClick={() => navigate("/dashboard/class-promotion")} tooltip="Class Promotion">
+                      <GraduationCap className="w-5 h-5" />
+                      <span>Class Promotion</span>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
 
@@ -201,6 +213,13 @@ export default function DashboardLayout() {
                       <span>Quizzes</span>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
+                  <div className="mt-6 mb-2 px-2 text-xs font-bold text-muted-foreground uppercase tracking-wider">Account</div>
+                  <SidebarMenuItem>
+                    <SidebarMenuButton onClick={() => navigate("/dashboard/change-password")} tooltip="Change Password">
+                      <KeyRound className="w-5 h-5" />
+                      <span>Change Password</span>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
                 </>
               )}
 
@@ -290,6 +309,13 @@ export default function DashboardLayout() {
                       <span>Assignments & Quizzes</span>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
+                  <div className="mt-6 mb-2 px-2 text-xs font-bold text-muted-foreground uppercase tracking-wider">Account</div>
+                  <SidebarMenuItem>
+                    <SidebarMenuButton onClick={() => navigate("/dashboard/change-password")} tooltip="Change Password">
+                      <KeyRound className="w-5 h-5" />
+                      <span>Change Password</span>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
                 </>
               )}
 
@@ -302,7 +328,7 @@ export default function DashboardLayout() {
             </SidebarMenuButton>
           </div>
         </Sidebar>
-        
+
         {/* Main Content Area */}
         <main className="flex-1 p-6 bg-gray-100/50 overflow-auto">
           <Outlet />

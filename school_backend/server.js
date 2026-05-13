@@ -89,6 +89,7 @@ app.use('/api/settings', cacheMiddleware(300000), require('./routes/settingsRout
 app.use('/api/subjects', cacheMiddleware(120000), require('./routes/subjectsRoutes')); // 2min cache
 app.use('/api/landing-content', require('./routes/landingContentRoutes'));
 app.use('/api/image', imageRoutes);
+app.use('/api/promotion', require('./routes/promotionRoutes'));
 
 
 // 3. STATIC FOLDER - WITH EXPLICIT CORS HEADERS
