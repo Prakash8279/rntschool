@@ -139,10 +139,10 @@ exports.getFeeHistory = async (req, res) => {
     query += " ORDER BY payment_date DESC";
 
     // Apply pagination
-    const safeLimit = Math.min(parseInt(limit), 5000); // Max 5000 records per request
-    const safeOffset = Math.max(0, parseInt(offset));
-    query += " LIMIT ? OFFSET ?";
-    params.push(safeLimit, safeOffset);
+    const safeLimit = Math.min(parseInt(limit) || 1000, 5000); // Max 5000 records per request
+    const safeOffset = Math.max(0, parseInt(offset) || 0);
+    query += ` LIMIT ${safeLimit} OFFSET ${safeOffset}`;
+
 
     const [rows] = await db.execute(query, params);
 

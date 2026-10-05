@@ -10,7 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { KeyRound, Search, ShieldCheck, Loader2, Eye, EyeOff } from "lucide-react";
 import axios from "axios";
 
-const API = "http://localhost:5000/api";
+const API = import.meta.env.VITE_API_URL || "/api";
 
 type UserEntry = { id: number | string; name: string; email: string; type: "admin" | "teacher" | "student" };
 

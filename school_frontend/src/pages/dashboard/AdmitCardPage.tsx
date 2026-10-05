@@ -13,6 +13,8 @@ import jsPDF from "jspdf";
 import schoolLogo from "@/assets/school-logo.png";
 import { getExamSchedule } from "@/lib/examManagement";
 
+const API_BASE = import.meta.env.VITE_API_URL || '/api';
+
 const AdmitCardPage = () => {
   const dispatch = useDispatch<AppDispatch>();
   const { students, loading } = useSelector((state: RootState) => state.student);
@@ -79,7 +81,7 @@ const AdmitCardPage = () => {
         
         // Use backend API to get base64 image
         const response = await fetch(
-          `http://localhost:5000/api/image/base64?path=${encodeURIComponent(selectedStudent.image)}`,
+          `${API_BASE}/image/base64?path=${encodeURIComponent(selectedStudent.image)}`,
           {
             headers: {
               'Authorization': `Bearer ${localStorage.getItem('token')}`

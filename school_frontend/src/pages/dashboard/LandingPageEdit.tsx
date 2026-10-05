@@ -13,7 +13,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
+const API_URL = import.meta.env.VITE_API_URL || "/api";
+const SERVER_BASE = API_URL.startsWith('http') ? API_URL.replace(/\/api\/?$/, '') : '';
 
 interface GalleryImage {
   id: number;
@@ -880,7 +881,7 @@ const LandingPageEdit = () => {
                       <Card key={image.id} className={`overflow-hidden ${!image.is_active ? 'opacity-50' : ''}`}>
                         <div className="relative h-40 bg-gray-100">
                           <img 
-                            src={image.image_type === 'external' ? image.external_url : `http://localhost:5000${image.image_path}`} 
+                            src={image.image_type === 'external' ? image.external_url : `${SERVER_BASE}${image.image_path.startsWith('/') ? '' : '/'}${image.image_path}`} 
                             alt={image.title}
                             className="w-full h-full object-cover"
                             onError={(e) => {

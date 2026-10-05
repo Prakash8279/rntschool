@@ -30,6 +30,8 @@ import {
   type ExamSubject,
 } from "@/lib/examManagement";
 
+const API_BASE = import.meta.env.VITE_API_URL || '/api';
+
 const AdmitCardManagement = () => {
   const dispatch = useDispatch<AppDispatch>();
   const { students } = useSelector((state: RootState) => state.student);
@@ -159,7 +161,7 @@ const AdmitCardManagement = () => {
         if (student.image) {
           try {
             const response = await fetch(
-              `http://localhost:5000/api/image/base64?path=${encodeURIComponent(student.image)}`,
+              `${API_BASE}/image/base64?path=${encodeURIComponent(student.image)}`,
               {
                 headers: {
                   'Authorization': `Bearer ${localStorage.getItem('token')}`
@@ -382,7 +384,7 @@ const AdmitCardManagement = () => {
             console.log("Loading photo via API:", student.image);
             
             const response = await fetch(
-              `http://localhost:5000/api/image/base64?path=${encodeURIComponent(student.image)}`,
+              `${API_BASE}/image/base64?path=${encodeURIComponent(student.image)}`,
               {
                 headers: {
                   'Authorization': `Bearer ${localStorage.getItem('token')}`

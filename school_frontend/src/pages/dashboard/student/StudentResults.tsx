@@ -18,6 +18,8 @@ import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import jsPDF from "jspdf";
 
+const API_BASE = import.meta.env.VITE_API_URL || '/api';
+
 interface GroupedResult {
   examName: string;
   subjects: ExamResult[];
@@ -166,7 +168,7 @@ const StudentResults = () => {
     if (userInfo?.image) {
       try {
         const response = await fetch(
-          `http://localhost:5000/api/image/base64?path=${encodeURIComponent(userInfo.image)}`,
+          `${API_BASE}/image/base64?path=${encodeURIComponent(userInfo.image)}`,
           {
             headers: {
               'Authorization': `Bearer ${userInfo.token}`

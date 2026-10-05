@@ -15,6 +15,8 @@ const initialState: StudentAdvanceState = {
   error: null,
 };
 
+const BASE_API = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+
 // Fetch advance balance for a specific student
 export const fetchStudentAdvance = createAsyncThunk(
   'studentAdvance/fetchByAdmissionNo',
@@ -25,7 +27,7 @@ export const fetchStudentAdvance = createAsyncThunk(
         headers: { Authorization: `Bearer ${token}` },
       };
       const { data } = await axios.get(
-        `${import.meta.env.VITE_API_URL || 'http://localhost:5000'}/api/fees/advance/${admissionNo}`,
+        `${BASE_API}/fees/advance/${admissionNo}`,
         config
       );
       return data;
@@ -45,7 +47,7 @@ export const fetchAllStudentAdvances = createAsyncThunk(
         headers: { Authorization: `Bearer ${token}` },
       };
       const { data } = await axios.get(
-        `${import.meta.env.VITE_API_URL || 'http://localhost:5000'}/api/fees/advance/all`,
+        `${BASE_API}/fees/advance/all`,
         config
       );
       return data;

@@ -1,6 +1,7 @@
 // Landing Page Content Management - API based
 
-const API_URL = 'http://localhost:5000/api/landing-content';
+const API_BASE = import.meta.env.VITE_API_URL || '/api';
+const API_URL = `${API_BASE}/landing-content`;
 
 export interface LandingPageContent {
   home: {

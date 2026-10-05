@@ -8,7 +8,8 @@ import galleryStudents1 from "@/assets/gallery-students-1.jpeg";
 import galleryFieldTrip2 from "@/assets/gallery-field-trip-2.jpeg";
 import galleryStudents2 from "@/assets/gallery-students-2.jpeg";
 
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
+const API_URL = import.meta.env.VITE_API_URL || "/api";
+const SERVER_BASE = API_URL.startsWith('http') ? API_URL.replace(/\/api\/?$/, '') : '';
 
 const defaultImages = [
   { src: galleryFieldTrip1, title: "Educational Trip", category: "Activities", emoji: "🎒" },
@@ -67,7 +68,7 @@ const Gallery = () => {
           // Set gallery images from API
           if (data.data.content?.gallery?.images && data.data.content.gallery.images.length > 0) {
             const apiImages = data.data.content.gallery.images.map((img: any) => ({
-              src: img.src.startsWith('http') ? img.src : `http://localhost:5000${img.src}`,
+              src: img.src.startsWith('http') ? img.src : `${SERVER_BASE}${img.src.startsWith('/') ? '' : '/'}${img.src}`,
               title: img.title,
               category: img.category,
               emoji: img.emoji

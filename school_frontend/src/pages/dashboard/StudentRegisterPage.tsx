@@ -71,9 +71,10 @@ const StudentRegisterPage = () => {
   const [registeredStudent, setRegisteredStudent] = useState<any>(null);
 
   // Configuration for API and Server URL
-  // VITE_API_URL should be "http://localhost:5000/api" in your .env
   const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
-  const SERVER_URL = "http://localhost:5000"; // Used to access static files
+  const SERVER_URL = import.meta.env.VITE_API_URL 
+    ? (import.meta.env.VITE_API_URL.startsWith('http') ? import.meta.env.VITE_API_URL.replace(/\/api\/?$/, '') : '') 
+    : "http://localhost:5000";
 
   const form = useForm<z.infer<typeof formSchema>>({
     resolver: zodResolver(formSchema),

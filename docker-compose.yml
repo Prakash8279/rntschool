@@ -1,0 +1,83 @@
+version: "3.9"
+
+services:
+  # ─────────────────────────────────────────
+  # MySQL Database
+  # ─────────────────────────────────────────
+  db:
+    image: mysql:8.0
+    container_name: rntschool_db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-rootpassword}
+      MYSQL_DATABASE: ${DB_NAME:-school}
+      MYSQL_USER: ${DB_USER:-school_user}
+      MYSQL_PASSWORD: ${DB_PASS:-school_password}
+    ports:
+      - "127.0.0.1:3306:3306"
+    volumes:
+      - db_data:/var/lib/mysql
+      - ./school.sql:/docker-entrypoint-initdb.d/school.sql:ro
+    networks:
+      - rntschool_network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${DB_ROOT_PASSWORD:-rootpassword}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # ─────────────────────────────────────────
+  # Node.js Backend
+  # ─────────────────────────────────────────
+  backend:
+    build:
+      context: ./school_backend
+      dockerfile: Dockerfile
+    container_name: rntschool_backend
+    restart: unless-stopped
+    environment:
+      PORT: 5000
+      DB_HOST: db
+      DB_USER: ${DB_USER:-school_user}
+      DB_PASS: ${DB_PASS:-school_password}
+      DB_NAME: ${DB_NAME:-school}
+      JWT_SECRET: ${JWT_SECRET:-mySuperSecretKey123!}
+    ports:
+      - "127.0.0.1:5000:5000"
+    volumes:
+      - uploads_data:/app/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - rntschool_network
+
+  # ─────────────────────────────────────────
+  # React Frontend (Nginx Reverse Proxy)
+  # ─────────────────────────────────────────
+  frontend:
+    build:
+      context: ./school_frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: /api
+    container_name: rntschool_frontend
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    networks:
+      - rntschool_network
+
+# ─────────────────────────────────────────
+# Volumes & Networks
+# ─────────────────────────────────────────
+volumes:
+  db_data:
+  uploads_data:
+
+networks:
+  rntschool_network:
+    driver: bridge

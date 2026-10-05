@@ -23,6 +23,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+
+const API_BASE = import.meta.env.VITE_API_URL || '/api';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
@@ -105,7 +107,7 @@ const ResultsManagement = () => {
   useEffect(() => {
     const fetchGradingConfig = async () => {
       try {
-        const response = await fetch('http://localhost:5000/api/settings/grading_config', {
+        const response = await fetch(`${API_BASE}/settings/grading_config`, {
           headers: {
             'Authorization': `Bearer ${userInfo?.token}`,
           },
@@ -463,7 +465,7 @@ const ResultsManagement = () => {
 
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch('http://localhost:5000/api/subjects', {
+      const response = await fetch(`${API_BASE}/subjects`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -495,7 +497,7 @@ const ResultsManagement = () => {
   const deleteSubject = async (subjectId: number) => {
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch(`http://localhost:5000/api/subjects/${subjectId}`, {
+      const response = await fetch(`${API_BASE}/subjects/${subjectId}`, {
         method: 'DELETE',
         headers: {
           'Authorization': `Bearer ${token}`
@@ -568,7 +570,7 @@ const ResultsManagement = () => {
     if (entry.image) {
       try {
         const response = await fetch(
-          `http://localhost:5000/api/image/base64?path=${encodeURIComponent(entry.image)}`,
+          `${API_BASE}/image/base64?path=${encodeURIComponent(entry.image)}`,
           {
             headers: {
               'Authorization': `Bearer ${localStorage.getItem('token')}`
@@ -897,7 +899,7 @@ const ResultsManagement = () => {
       if (entry.image) {
         try {
           const response = await fetch(
-            `http://localhost:5000/api/image/base64?path=${encodeURIComponent(entry.image)}`,
+            `${API_BASE}/image/base64?path=${encodeURIComponent(entry.image)}`,
             { headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` } }
           );
           if (response.ok) {
@@ -1485,7 +1487,7 @@ const ResultsManagement = () => {
                           console.log('Saving grading config to database:', gradingConfig);
                           
                           // Save config to database
-                          const response = await fetch('http://localhost:5000/api/settings', {
+                          const response = await fetch(`${API_BASE}/settings`, {
                             method: 'POST',
                             headers: {
                               'Content-Type': 'application/json',

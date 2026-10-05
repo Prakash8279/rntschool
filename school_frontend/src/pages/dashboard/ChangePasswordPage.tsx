@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label";
 import { KeyRound, Eye, EyeOff, Loader2, ShieldCheck, CheckCircle2 } from "lucide-react";
 import axios from "axios";
 
-const API = "http://localhost:5000/api";
+const API = import.meta.env.VITE_API_URL || "/api";
 
 export default function ChangePasswordPage() {
     const { userInfo } = useSelector((state: RootState) => state.auth);

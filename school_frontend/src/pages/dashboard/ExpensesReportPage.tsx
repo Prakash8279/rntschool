@@ -10,6 +10,8 @@ import { Button } from "@/components/ui/button";
 import { Loader2, TrendingDown, Download } from "lucide-react";
 import * as XLSX from 'xlsx';
 
+const API_URL = import.meta.env.VITE_API_URL || '/api';
+
 const ExpensesReportPage = () => {
   const dispatch = useDispatch<AppDispatch>();
   const { history, loading } = useSelector((state: RootState) => state.salary);
@@ -28,7 +30,7 @@ const ExpensesReportPage = () => {
     const fetchExpenses = async () => {
       try {
         const token = userInfo?.token;
-        const response = await fetch('http://localhost:5000/api/expenses', {
+        const response = await fetch(`${API_URL}/expenses`, {
           headers: {
             'Authorization': `Bearer ${token}`
           }

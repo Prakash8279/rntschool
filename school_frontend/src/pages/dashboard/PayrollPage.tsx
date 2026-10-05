@@ -14,6 +14,8 @@ import { Loader2, Banknote } from "lucide-react";
 import jsPDF from "jspdf";
 import schoolLogo from "@/assets/school-logo.png";
 
+const API_URL = import.meta.env.VITE_API_URL || '/api';
+
 const PayrollPage = () => {
   const dispatch = useDispatch<AppDispatch>();
   
@@ -43,7 +45,7 @@ const PayrollPage = () => {
     const fetchExpenses = async () => {
       try {
         const token = userInfo?.token;
-        const response = await fetch('http://localhost:5000/api/expenses', {
+        const response = await fetch(`${API_URL}/expenses`, {
           headers: {
             'Authorization': `Bearer ${token}`
           }
@@ -336,7 +338,7 @@ const PayrollPage = () => {
     // Send to backend
     try {
       const token = userInfo?.token;
-      const response = await fetch('http://localhost:5000/api/expenses', {
+      const response = await fetch(`${API_URL}/expenses`, {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
