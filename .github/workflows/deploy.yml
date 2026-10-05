@@ -1,4 +1,4 @@
-name: Build & Deploy RNT School
+name: Build & Validate RNT School
 
 on:
   push:
@@ -10,9 +10,6 @@ on:
   workflow_dispatch: # Allows manual trigger from GitHub UI
 
 jobs:
-  # ─────────────────────────────────────────
-  # Job 1: Test & Build Frontend and Backend
-  # ─────────────────────────────────────────
   build-and-test:
     name: 🔨 Build & Validate Project
     runs-on: ubuntu-latest
@@ -44,38 +41,8 @@ jobs:
           VITE_API_URL: /api
         run: npm run build
 
-      # Docker build test
+      # Docker build validation
       - name: 🐳 Validate Docker Compose Build
         run: |
           cp .env.example .env
           docker compose build
-
-  # ─────────────────────────────────────────
-  # Job 2: Auto Deploy to AWS EC2 (Optional)
-  # Triggers automatically if EC2 Secrets are set
-  # ─────────────────────────────────────────
-  deploy-to-ec2:
-    name: 🚀 Deploy to AWS EC2
-    needs: build-and-test
-    runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-
-    steps:
-      - name: 📥 Checkout repository
-        uses: actions/checkout@v4
-
-      - name: 🚀 SSH & Auto-Deploy on EC2
-        if: "${{ env.HAS_SECRETS == 'true' }}"
-        env:
-          HAS_SECRETS: "${{ secrets.EC2_HOST != '' && secrets.EC2_SSH_KEY != '' }}"
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USER || 'ubuntu' }}
-          key: ${{ secrets.EC2_SSH_KEY }}
-          port: 22
-          script: |
-            cd ~/rntschool || cd /var/www/rntschool
-            git pull origin main
-            chmod +x deploy.sh backup_db.sh
-            ./deploy.sh
