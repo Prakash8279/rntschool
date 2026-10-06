@@ -58,8 +58,12 @@ fi
 
 # 5. Build and run containers
 echo "🔨 Building and starting Docker containers..."
-sudo docker compose down
-sudo docker compose up -d --build
+if [ -d "/etc/letsencrypt/live" ]; then
+    echo "🔒 SSL certificates detected, starting with HTTPS..."
+    sudo docker compose -f docker-compose.yml -f docker-compose.ssl.yml up -d --build
+else
+    sudo docker compose up -d --build
+fi
 
 # 6. Check container status
 echo ""
