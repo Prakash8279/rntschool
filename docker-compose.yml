@@ -60,8 +60,6 @@ services:
     build:
       context: ./school_frontend
       dockerfile: Dockerfile
-      args:
-        VITE_API_URL: /api
     container_name: rntschool_frontend
     restart: unless-stopped
     ports:

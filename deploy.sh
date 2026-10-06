@@ -10,6 +10,21 @@ echo "=========================================================="
 echo "🚀 Starting RNT School Deployment on AWS EC2..."
 echo "=========================================================="
 
+# 0. Setup Swap Memory (Crucial for 1GB RAM instances like t3.micro to prevent freeze)
+if ! swapon --show | grep -q "/swapfile"; then
+    echo "🧠 Setting up 4GB Swap memory to prevent RAM freeze..."
+    if [ ! -f /swapfile ]; then
+        sudo fallocate -l 4G /swapfile || sudo dd if=/dev/zero of=/swapfile bs=1M count=4096
+        sudo chmod 600 /swapfile
+        sudo mkswap /swapfile
+    fi
+    sudo swapon /swapfile
+    grep -q "/swapfile" /etc/fstab || echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+    echo "✅ 4GB Swap memory activated!"
+else
+    echo "✅ Swap memory already active."
+fi
+
 # 1. Update OS packages
 echo "📦 Updating system packages..."
 sudo apt-get update -y || sudo yum update -y
