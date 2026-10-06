@@ -73,7 +73,11 @@ sudo docker compose ps
 
 echo ""
 echo "=========================================================="
-echo "🎉 Deployment Completed Successfully!"
-echo "👉 Your school application is running on port 80!"
-echo "👉 Access via browser: http://$(curl -s http://checkip.amazonaws.com || curl -s ifconfig.me)"
+if [ -d "/etc/letsencrypt/live" ]; then
+    echo "🎉 Deployment Completed Successfully!"
+    echo "👉 Secure Website Live at: https://rntpublicschool.in"
+else
+    echo "🎉 Deployment Completed Successfully!"
+    echo "👉 Access via browser: http://$(curl -s http://checkip.amazonaws.com || curl -s ifconfig.me)"
+fi
 echo "=========================================================="

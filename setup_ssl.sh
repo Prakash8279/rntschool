@@ -23,9 +23,8 @@ sudo certbot certonly --standalone \
   -d $DOMAIN -d www.$DOMAIN \
   --non-interactive --agree-tos -m $EMAIL
 
-# 4. Use SSL Nginx config
+# 4. SSL Nginx config is handled via docker-compose.ssl.yml
 echo "⚙️ Configuring Nginx for SSL..."
-cp school_frontend/nginx-ssl.conf school_frontend/nginx.conf
 
 # 5. Start containers with SSL
 echo "🚀 Restarting containers with HTTPS on port 443..."
